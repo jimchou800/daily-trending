@@ -11,6 +11,7 @@ from .analyzer import analyze_live_snapshot, analyze_snapshot
 from .collector import collect_snapshot, collect_trending
 from .dashscope import DashScopeClient
 from .organizer import organize_report, write_report
+from .persistence import ArtifactStore
 
 
 @dataclass(frozen=True)
@@ -45,15 +46,36 @@ def run_live_pipeline(
     *,
     fetch: Callable[[str], str] | None = None,
     source_loader: Callable[[dict], dict] | None = None,
+    artifact_root: Path | None = None,
 ) -> PipelineResult:
     """Collect the live Daily snapshot, analyze it, and write a preview artifact."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    snapshot = collect_trending(issue_date, collected_at, fetch=fetch)
+    store = ArtifactStore(artifact_root, issue_date) if artifact_root else None
+    if store:
+        store.begin_run()
+    snapshot = store.load_compatible("collector") if store else None
+    if snapshot is None:
+        snapshot = collect_trending(issue_date, collected_at, fetch=fetch)
+        if store:
+            store.save("collector", snapshot)
     collector_path = output_dir / "collector.json"
     collector_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    analysis = analyze_live_snapshot(snapshot, client, source_loader=source_loader, expected_period=issue_date)
+    if store:
+        client.restore_usage(store.state.get("calls_used", 0), store.state.get("estimated_spend_cny", 0.0))
+        original_reserve = client._reserve_call
+        def reserve_with_state() -> None:
+            original_reserve()
+            store.update_usage(client.calls_used, client.estimated_spend_cny)
+        client._reserve_call = reserve_with_state
+    analysis = store.load_compatible("analyzer", snapshot["snapshot_id"]) if store else None
+    if analysis is None:
+        analysis = analyze_live_snapshot(snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store)
+        if store and analysis["stage"]["status"] == "succeeded":
+            store.save("analyzer", analysis)
     analyzer_path = output_dir / "analyzer.json"
     analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     report = organize_report(analysis)
     report_path, html_path = write_report(report, output_dir)
+    if store:
+        store.finish_run("succeeded")
     return PipelineResult(report_path, html_path, collector_path, analyzer_path)

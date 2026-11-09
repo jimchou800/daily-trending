@@ -48,6 +48,13 @@ class DashScopeClient:
         self.calls_used = 0
         self.estimated_spend_cny = 0.0
 
+    def restore_usage(self, calls_used: int, estimated_spend_cny: float) -> None:
+        """Restore durable usage before a resumed run can make another request."""
+        if calls_used < 0 or estimated_spend_cny < 0:
+            raise ValueError("invalid persisted model usage")
+        self.calls_used = calls_used
+        self.estimated_spend_cny = estimated_spend_cny
+
     def complete(self, source_text: str) -> str:
         """Return a validated JSON model response, retrying transient failures."""
         if not self.api_key:

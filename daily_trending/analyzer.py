@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .contracts import CONTRACT_VERSION, require, require_github_url, validate_common_artifact
 from .dashscope import DashScopeClient, build_analysis_prompt
 from .github_sources import load_github_sources
+from .persistence import ArtifactStore
 
 
 def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str | None = None) -> dict:
@@ -106,6 +107,7 @@ def analyze_live_snapshot(
     source_loader: Callable[[dict], dict[str, Any]] | None = None,
     *,
     expected_period: str | None = None,
+    cache_store: ArtifactStore | None = None,
 ) -> dict:
     """Analyze each collected repository through DashScope in source order.
 
@@ -123,6 +125,12 @@ def analyze_live_snapshot(
     completed = False
     for entry in entries:
         try:
+            if cache_store:
+                cached = cache_store.load_analysis(entry["repository"], snapshot["snapshot_id"], client.config.model)
+                if cached is not None:
+                    analyses.append(_validated_entry(snapshot, entry, cached))
+                    completed = True
+                    continue
             source = source_loader(entry) if source_loader else load_github_sources(entry)
             prompt_entry = dict(entry)
             prompt_entry["github_sources"] = source
@@ -140,6 +148,8 @@ def analyze_live_snapshot(
                 response_path.unlink(missing_ok=True)
             completed = True
             analyses.extend(result["analyses"])
+            if cache_store and result["analyses"]:
+                cache_store.save_analysis(entry["repository"], snapshot["snapshot_id"], client.config.model, responses[0])
             errors.extend(result["stage"]["errors"])
         except Exception as exc:  # isolated candidate failure by contract
             errors.append(f"analysis failed for {entry['repository']}: {exc}")
@@ -153,3 +163,18 @@ def analyze_live_snapshot(
         "snapshot": {"source_url": source["source_url"], "scope": source["scope"], "collected_at": source["collected_at"]},
         "analyses": analyses,
     }
+
+
+def _validated_entry(snapshot: dict, entry: dict, response: dict) -> dict:
+    """Validate a cached response through the same analyzer contract as fresh output."""
+    from tempfile import NamedTemporaryFile
+    with NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
+        json.dump({"snapshot_id": snapshot["snapshot_id"], "analyses": [response]}, handle)
+        path = Path(handle.name)
+    try:
+        result = analyze_snapshot(snapshot, path, expected_period=snapshot["period_id"])
+    finally:
+        path.unlink(missing_ok=True)
+    if not result["analyses"]:
+        raise ValueError("cached analysis is incompatible")
+    return result["analyses"][0]

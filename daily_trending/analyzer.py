@@ -149,7 +149,9 @@ def analyze_live_snapshot(
             completed = True
             analyses.extend(result["analyses"])
             if cache_store and result["analyses"]:
-                cache_store.save_analysis(entry["repository"], snapshot["snapshot_id"], client.config.model, responses[0])
+                cached_response = next((item for item in responses if isinstance(item, dict) and item.get("repository") == entry["repository"]), None)
+                if cached_response is not None:
+                    cache_store.save_analysis(entry["repository"], snapshot["snapshot_id"], client.config.model, cached_response)
             errors.extend(result["stage"]["errors"])
         except Exception as exc:  # isolated candidate failure by contract
             errors.append(f"analysis failed for {entry['repository']}: {exc}")

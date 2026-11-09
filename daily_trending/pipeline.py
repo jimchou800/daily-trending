@@ -53,29 +53,37 @@ def run_live_pipeline(
     store = ArtifactStore(artifact_root, issue_date) if artifact_root else None
     if store:
         store.begin_run()
-    snapshot = store.load_compatible("collector") if store else None
-    if snapshot is None:
-        snapshot = collect_trending(issue_date, collected_at, fetch=fetch)
+    try:
+        snapshot = store.load_compatible("collector") if store else None
+        if snapshot is None:
+            snapshot = collect_trending(issue_date, collected_at, fetch=fetch)
+            if store:
+                store.save("collector", snapshot)
+        collector_path = output_dir / "collector.json"
+        collector_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if store:
-            store.save("collector", snapshot)
-    collector_path = output_dir / "collector.json"
-    collector_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    if store:
-        client.restore_usage(store.state.get("calls_used", 0), store.state.get("estimated_spend_cny", 0.0))
-        original_reserve = client._reserve_call
-        def reserve_with_state() -> None:
-            original_reserve()
-            store.update_usage(client.calls_used, client.estimated_spend_cny)
-        client._reserve_call = reserve_with_state
-    analysis = store.load_compatible("analyzer", snapshot["snapshot_id"]) if store else None
-    if analysis is None:
-        analysis = analyze_live_snapshot(snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store)
-        if store and analysis["stage"]["status"] == "succeeded":
-            store.save("analyzer", analysis)
-    analyzer_path = output_dir / "analyzer.json"
-    analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    report = organize_report(analysis)
-    report_path, html_path = write_report(report, output_dir)
-    if store:
-        store.finish_run("succeeded")
-    return PipelineResult(report_path, html_path, collector_path, analyzer_path)
+            client.restore_usage(store.state.get("calls_used", 0), store.state.get("estimated_spend_cny", 0.0))
+            original_reserve = client._reserve_call
+
+            def reserve_with_state() -> None:
+                original_reserve()
+                store.update_usage(client.calls_used, client.estimated_spend_cny)
+
+            client._reserve_call = reserve_with_state
+        analysis = store.load_compatible("analyzer", snapshot["snapshot_id"], client.config.model) if store else None
+        if analysis is None:
+            analysis = analyze_live_snapshot(snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store)
+            if store and analysis["stage"]["status"] == "succeeded":
+                analysis["model"] = client.config.model
+                store.save("analyzer", analysis)
+        analyzer_path = output_dir / "analyzer.json"
+        analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report = organize_report(analysis)
+        report_path, html_path = write_report(report, output_dir)
+        if store:
+            store.finish_run("succeeded")
+        return PipelineResult(report_path, html_path, collector_path, analyzer_path)
+    except Exception as exc:
+        if store:
+            store.finish_run("failed", str(exc))
+        raise

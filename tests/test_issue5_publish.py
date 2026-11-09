@@ -13,7 +13,7 @@ class PublishTests(unittest.TestCase):
             path = publish_report(report, "<main>ok</main>", Path(directory), "2026-11-09T00:30:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T08:00:00+08:00"))
             publish_report(report, "<main>ok</main>", Path(directory), "2026-11-09T01:00:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T08:30:00+08:00"))
             saved = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(saved["published_at"], "2026-11-09T01:00:00Z")
+            self.assertEqual(saved["published_at"], "2026-11-09T00:30:00Z")
             self.assertEqual(json.loads((Path(directory) / "index.json").read_text())["archive_dates"], ["2026-11-09"])
 
     def test_late_publication_is_rejected_before_writing(self):

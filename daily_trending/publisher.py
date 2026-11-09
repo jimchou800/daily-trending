@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from .contracts import require, require_date, require_timestamp
 
@@ -16,9 +15,9 @@ def publish_report(report: dict, html_content: str, site_root: Path, published_a
     require_date(report.get("report_date"), "report_date")
     require_timestamp(published_at, "published_at")
     require(report.get("status") in ("published", "sample_preview"), "report is not publishable")
-    timezone = ZoneInfo("Asia/Shanghai")
-    current_time = now.astimezone(timezone) if now else datetime.now(timezone)
-    deadline = datetime.combine(datetime.fromisoformat(report["report_date"]).date(), time(9, 0), timezone)
+    beijing = timezone(timedelta(hours=8))
+    current_time = now.astimezone(beijing) if now else datetime.now(beijing)
+    deadline = datetime.combine(datetime.fromisoformat(report["report_date"]).date(), time(9, 0), beijing)
     require(current_time < deadline, "publication deadline has passed")
     report = dict(report)
     report["published_at"] = published_at

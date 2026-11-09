@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 from .contracts import require, require_date, require_timestamp
+from .scheduler import render_homepage
 
 
 def publish_report(report: dict, html_content: str, site_root: Path, published_at: str, *, now: datetime | None = None) -> Path:
@@ -43,4 +44,7 @@ def publish_report(report: dict, html_content: str, site_root: Path, published_a
     temporary_index = index.with_suffix(".tmp")
     temporary_index.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary_index, index)
+    homepage_temporary = root / "index.html.tmp"
+    homepage_temporary.write_text(render_homepage(html_content), encoding="utf-8")
+    os.replace(homepage_temporary, root / "index.html")
     return target

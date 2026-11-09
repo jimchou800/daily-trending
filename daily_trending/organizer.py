@@ -58,7 +58,8 @@ def render_html(report: dict) -> str:
             f"<dt>项目特点</dt><dd>{html.escape(item['characteristics'])}</dd>"
             f"<dt>热度</dt><dd>当日新增 Star：{html.escape(str(stars_today))}；累计 Star：{html.escape(str(stars_total))}</dd>"
             f"<dt>走红原因</dt><dd>{html.escape(reason)}</dd></dl>"
-            f"<p><a href=\"{html.escape(item['repository_url'], quote=True)}\">查看仓库</a> · "
+            + (f"<p>{html.escape(item['repeat_change'])} · <a href=\"{html.escape(item['previous_report_url'], quote=True)}\">上次介绍</a></p>" if item.get("repeat_change") and item.get("previous_report_url") else "")
+            + f"<p><a href=\"{html.escape(item['repository_url'], quote=True)}\">查看仓库</a> · "
             + " · ".join(f'<a href=\"{html.escape(url, quote=True)}\">来源</a>' for url in item["sources"])
             + "</p></article>"
         )

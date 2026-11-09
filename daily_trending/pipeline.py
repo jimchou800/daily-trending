@@ -12,6 +12,7 @@ from .collector import collect_snapshot, collect_trending
 from .dashscope import DashScopeClient
 from .organizer import organize_report, write_report
 from .persistence import ArtifactStore
+from .selection import filter_repeat_entries
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,7 @@ class PipelineResult:
     analyzer_path: Path
 
 
-def run_sample_pipeline(snapshot_path: Path, response_path: Path, output_dir: Path, issue_date: str, collected_at: str) -> PipelineResult:
+def run_sample_pipeline(snapshot_path: Path, response_path: Path, output_dir: Path, issue_date: str, collected_at: str, *, history: list[dict] | None = None) -> PipelineResult:
     """Run collector, analyzer, and organizer against saved development samples."""
     output_dir.mkdir(parents=True, exist_ok=True)
     snapshot = collect_snapshot(snapshot_path, issue_date, collected_at)
@@ -33,6 +34,8 @@ def run_sample_pipeline(snapshot_path: Path, response_path: Path, output_dir: Pa
     analysis = analyze_snapshot(snapshot, response_path, expected_period=issue_date)
     analyzer_path = output_dir / "analyzer.json"
     analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    analysis["analyses"], decisions = filter_repeat_entries(analysis["analyses"], issue_date, history or [])
+    (output_dir / "selection.json").write_text(json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     report = organize_report(analysis)
     report_path, html_path = write_report(report, output_dir)
     return PipelineResult(report_path, html_path, collector_path, analyzer_path)
@@ -47,6 +50,8 @@ def run_live_pipeline(
     fetch: Callable[[str], str] | None = None,
     source_loader: Callable[[dict], dict] | None = None,
     artifact_root: Path | None = None,
+    history: list[dict] | None = None,
+    releases_by_repository: dict[str, list[dict]] | None = None,
 ) -> PipelineResult:
     """Collect the live Daily snapshot, analyze it, and write a preview artifact."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -78,6 +83,10 @@ def run_live_pipeline(
                 store.save("analyzer", analysis)
         analyzer_path = output_dir / "analyzer.json"
         analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        analysis["analyses"], decisions = filter_repeat_entries(
+            analysis["analyses"], issue_date, history or [], releases_by_repository=releases_by_repository
+        )
+        (output_dir / "selection.json").write_text(json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         report = organize_report(analysis)
         report_path, html_path = write_report(report, output_dir)
         if store:

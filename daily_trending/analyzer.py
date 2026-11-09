@@ -1,0 +1,96 @@
+"""Analyzer stage that joins saved model responses to collected entries."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from .contracts import CONTRACT_VERSION, require, require_github_url, validate_common_artifact
+
+
+def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str | None = None) -> dict:
+    """Validate a collector artifact and produce ordered AI analyses.
+
+    Heat metrics and rank are copied exclusively from the collector artifact;
+    response values for those fields are ignored.  Non-AI entries are filtered
+    in source order and are never replaced with outside projects.
+    """
+    validate_common_artifact(snapshot, "collector")
+    if expected_period is not None and snapshot["period_id"] != expected_period:
+        raise ValueError("period does not match requested run")
+    source = snapshot["snapshot"]
+    require(source.get("scope"), "missing snapshot scope")
+    entries = source.get("entries")
+    require(isinstance(entries, list), "snapshot entries are missing")
+    try:
+        payload = json.loads(Path(response_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("model responses could not be read") from exc
+    if payload.get("snapshot_id") is not None and payload.get("snapshot_id") != snapshot["snapshot_id"]:
+        raise ValueError("model response snapshot does not match collector snapshot")
+    responses = payload.get("analyses")
+    require(isinstance(responses, list), "model analyses are missing")
+    by_repository = {item.get("repository"): item for item in responses if isinstance(item, dict)}
+    analyses = []
+    errors = []
+    for entry in entries:
+        response = by_repository.get(entry["repository"])
+        if response is None:
+            errors.append(f"missing analysis for {entry['repository']}")
+            continue
+        if not isinstance(response.get("is_ai"), bool):
+            errors.append(f"invalid relevance for {entry['repository']}")
+            continue
+        if not response["is_ai"]:
+            continue
+        required = ("ai_relevance_evidence", "project_type", "introduction", "problem_solved", "audience", "characteristics")
+        if any(not isinstance(response.get(field), str) or not response[field].strip() for field in required):
+            errors.append(f"incomplete analysis for {entry['repository']}")
+            continue
+        sources = response.get("sources")
+        if not isinstance(sources, list) or not sources or any(not isinstance(url, str) for url in sources):
+            errors.append(f"missing sources for {entry['repository']}")
+            continue
+        try:
+            for url in sources:
+                require_github_url(url, "source")
+        except ValueError:
+            errors.append(f"non-GitHub source for {entry['repository']}")
+            continue
+        reason_has_evidence = response.get("reason_has_evidence")
+        if not isinstance(reason_has_evidence, bool):
+            errors.append(f"invalid reason evidence for {entry['repository']}")
+            continue
+        reason = response.get("reason")
+        if reason_has_evidence and (not isinstance(reason, str) or not reason.strip()):
+            errors.append(f"missing reason for {entry['repository']}")
+            continue
+        analyses.append(
+            {
+                "repository": entry["repository"],
+                "repository_url": entry["repository_url"],
+                "rank": entry["rank"],
+                "ai_relevance_evidence": response["ai_relevance_evidence"],
+                "project_type": response["project_type"],
+                "introduction": response["introduction"],
+                "problem_solved": response["problem_solved"],
+                "audience": response["audience"],
+                "characteristics": response["characteristics"],
+                "heat": {"stars_today": entry.get("stars_today"), "stars_total": entry.get("stars_total")},
+                "reason_has_evidence": reason_has_evidence,
+                "reason": reason if reason_has_evidence else None,
+                "sources": sources,
+            }
+        )
+    if not analyses and any(item.get("is_ai") is True for item in responses if isinstance(item, dict)) and errors:
+        status = "failed"
+    else:
+        status = "succeeded"
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "period_id": snapshot["period_id"],
+        "snapshot_id": snapshot["snapshot_id"],
+        "stage": {"name": "analyzer", "status": status, "errors": errors},
+        "snapshot": {"source_url": source["source_url"], "scope": source["scope"], "collected_at": source["collected_at"]},
+        "analyses": analyses,
+    }

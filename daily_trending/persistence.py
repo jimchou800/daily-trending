@@ -19,7 +19,8 @@ class ArtifactStore:
 
     def __init__(self, root: Path, period_id: str) -> None:
         require_date(period_id, "period")
-        self.directory = Path(root) / period_id
+        self.root = Path(root)
+        self.directory = self.root / period_id
         self.directory.mkdir(parents=True, exist_ok=True)
         self.state_path = self.directory / "run-state.json"
         self.state = self._read_state()
@@ -111,10 +112,37 @@ class ArtifactStore:
         self._write_state()
 
     def update_usage(self, calls_used: int, estimated_spend_cny: float) -> None:
-        """Persist model usage so a resumed process retains budget continuity."""
+        """Persist period and calendar-month model usage for budget continuity."""
         self.state["calls_used"] = calls_used
         self.state["estimated_spend_cny"] = estimated_spend_cny
         self._write_state()
+        monthly_path = self.root / f"monthly-{self.directory.name[:7]}.json"
+        temporary = monthly_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(
+                {"calls_used": calls_used, "estimated_spend_cny": estimated_spend_cny},
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, monthly_path)
+
+    def monthly_usage(self) -> dict[str, float | int]:
+        """Return cumulative model usage for this report's calendar month."""
+        path = self.root / f"monthly-{self.directory.name[:7]}.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            calls_used = int(data.get("calls_used", 0))
+            spend = float(data.get("estimated_spend_cny", 0.0))
+            if calls_used < 0 or spend < 0:
+                raise ValueError("negative monthly usage")
+            return {"calls_used": calls_used, "estimated_spend_cny": spend}
+        except FileNotFoundError:
+            return {"calls_used": 0, "estimated_spend_cny": 0.0}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("monthly usage ledger is corrupt") from exc
 
     def load_analysis(self, repository: str, snapshot_id: str, model: str) -> dict[str, Any] | None:
         """Load a candidate analysis only when all compatibility identities match."""

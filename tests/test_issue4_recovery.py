@@ -99,6 +99,14 @@ class Issue4RecoveryTests(unittest.TestCase):
             store.save_analysis("example/alpha", "snapshot", "model-a", {"repository": "example/alpha", "is_ai": True})
             self.assertIsNone(store.load_analysis("example/alpha", "snapshot", "model-b"))
 
+    def test_model_usage_is_shared_across_report_dates_in_one_month(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = ArtifactStore(root, "2026-11-09")
+            first.update_usage(3, 0.15)
+            second = ArtifactStore(root, "2026-11-10")
+            self.assertEqual(second.monthly_usage(), {"calls_used": 3, "estimated_spend_cny": 0.15})
+
 
 if __name__ == "__main__":
     unittest.main()

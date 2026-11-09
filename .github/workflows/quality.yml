@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -r requirements-dev.txt
-      - run: black --check daily_trending tests
+      - run: black --check daily_trending tests scripts
       - run: ruff check daily_trending tests scripts
       - run: python -m coverage run --branch -m unittest discover -s tests
       - run: python -m coverage json -o coverage.json

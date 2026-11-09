@@ -135,6 +135,7 @@ def analyze_live_snapshot(
     errors: list[str] = []
     release_evidence: dict[str, list[dict]] = {}
     completed = False
+    analysis_failure = False
     for entry in entries:
         try:
             if cache_store:
@@ -174,10 +175,13 @@ def analyze_live_snapshot(
                 json.dump({"snapshot_id": snapshot["snapshot_id"], "analyses": responses}, response_file)
                 response_path = Path(response_file.name)
             try:
-                result = analyze_snapshot(snapshot, response_path, expected_period=expected_period)
+                candidate_snapshot = dict(snapshot)
+                candidate_snapshot["snapshot"] = dict(snapshot["snapshot"], entries=[entry])
+                result = analyze_snapshot(candidate_snapshot, response_path, expected_period=expected_period)
             finally:
                 response_path.unlink(missing_ok=True)
-            completed = True
+            completed = result["stage"]["status"] == "succeeded"
+            analysis_failure = analysis_failure or not completed
             analyses.extend(result["analyses"])
             if cache_store and result["analyses"]:
                 cached_response = next(
@@ -195,7 +199,7 @@ def analyze_live_snapshot(
             errors.extend(result["stage"]["errors"])
         except Exception as exc:  # isolated candidate failure by contract
             errors.append(f"analysis failed for {entry['repository']}: {exc}")
-    status = "succeeded" if completed else "failed"
+    status = "succeeded" if analyses or (completed and not analysis_failure and not errors) else "failed"
     source = snapshot["snapshot"]
     return {
         "contract_version": CONTRACT_VERSION,

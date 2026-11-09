@@ -78,7 +78,8 @@ def run_live_pipeline(
         collector_path = output_dir / "collector.json"
         collector_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if store:
-            client.restore_usage(store.state.get("calls_used", 0), store.state.get("estimated_spend_cny", 0.0))
+            monthly_usage = store.monthly_usage()
+            client.restore_usage(monthly_usage["calls_used"], monthly_usage["estimated_spend_cny"])
             original_reserve = client._reserve_call
 
             def reserve_with_state() -> None:

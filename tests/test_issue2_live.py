@@ -191,10 +191,23 @@ class DashScopeTests(unittest.TestCase):
 
         client = DashScopeClient(api_key="secret", transport=transport, config=DashScopeConfig(max_retries=0))
         result = analyze_live_snapshot(snapshot, client, lambda entry: {"repository_url": entry["repository_url"]})
-        self.assertEqual(result["stage"]["status"], "succeeded")
+        self.assertEqual(result["stage"]["status"], "failed")
         self.assertEqual(result["analyses"], [])
         self.assertEqual(len(calls), 2)
         self.assertTrue(any("analysis failed" in error for error in result["stage"]["errors"]))
+
+    def test_live_analyzer_accepts_a_verified_empty_ai_selection(self):
+        snapshot = collect_snapshot_from_entries()
+
+        def transport(payload, _api_key):
+            repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
+            return {"choices": [{"message": {"content": json.dumps({"repository": repository, "is_ai": False})}}]}
+
+        client = DashScopeClient(api_key="secret", transport=transport, config=DashScopeConfig(max_retries=0))
+        result = analyze_live_snapshot(snapshot, client, lambda entry: {"repository_url": entry["repository_url"]})
+        self.assertEqual(result["stage"]["status"], "succeeded")
+        self.assertEqual(result["analyses"], [])
+        self.assertEqual(result["stage"]["errors"], [])
 
     def test_live_pipeline_writes_preview_from_saved_html_and_model_transport(self):
         from tempfile import TemporaryDirectory

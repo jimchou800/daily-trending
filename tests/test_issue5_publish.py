@@ -15,6 +15,8 @@ class PublishTests(unittest.TestCase):
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["published_at"], "2026-11-09T00:30:00Z")
             self.assertEqual(json.loads((Path(directory) / "index.json").read_text())["archive_dates"], ["2026-11-09"])
+            homepage = (Path(directory) / "index.html").read_text(encoding="utf-8")
+            self.assertIn("Asia/Shanghai", homepage)
 
     def test_late_publication_is_rejected_before_writing(self):
         report = {"report_date": "2026-11-09", "status": "published"}

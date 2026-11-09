@@ -65,6 +65,13 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(state["status"], "failed")
             self.assertEqual(state["latest_report_date"], "2026-11-08")
 
+    def test_future_index_does_not_mask_today_missing_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "index.json").write_text(json.dumps({"latest_report_date": "2026-11-10"}), encoding="utf-8")
+            state = homepage_status(root, datetime(2026, 11, 9, 9, tzinfo=BEIJING))
+            self.assertEqual(state["status"], "failed")
+
     def test_homepage_html_rechecks_status_using_beijing_browser_time(self):
         page = render_homepage("<!doctype html><html><body><main>latest</main></body></html>")
         self.assertIn("Asia/Shanghai", page)

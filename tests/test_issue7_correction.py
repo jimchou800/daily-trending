@@ -33,7 +33,7 @@ class CorrectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             original = self._published_site(root)
-            corrected = dict(original, summary="corrected fact")
+            corrected = dict(original, entries=[dict(original["entries"][0], introduction="Corrected source-backed description.")])
             path = correct_report(
                 corrected,
                 root,
@@ -46,6 +46,8 @@ class CorrectionTests(unittest.TestCase):
             self.assertEqual(saved["entries"], original["entries"])
             self.assertEqual(saved["history"], original["history"])
             self.assertEqual(saved["correction"], {"corrected_at": "2026-11-09T02:00:00Z", "note": "修正仓库说明"})
+            history = json.loads((root / "history.json").read_text(encoding="utf-8"))
+            self.assertEqual(history[0]["entries"][0]["introduction"], "Corrected source-backed description.")
             self.assertIn("修正仓库说明", (root / "archive" / "2026-11-09" / "index.html").read_text())
             correct_report(corrected, root, "2026-11-09T02:30:00Z", "<script>alert(1)</script>")
             rendered = (root / "archive" / "2026-11-09" / "index.html").read_text()

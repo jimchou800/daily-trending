@@ -1,0 +1,11 @@
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.coverage.run]
+source = ["daily_trending"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+omit = ["daily_trending/__init__.py"]

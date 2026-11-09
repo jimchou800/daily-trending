@@ -130,7 +130,7 @@ def homepage_status(site_root: Path, now: datetime | None = None) -> dict[str, o
         latest = None
         published_at = None
     today = current.date()
-    if latest and datetime.fromisoformat(latest).date() >= today:
+    if latest and datetime.fromisoformat(latest).date() == today:
         return {"status": "published", "latest_report_date": latest, "published_at": published_at, "message": ""}
     if current.time() < time(9):
         return {"status": "published" if latest else "unpublished", "latest_report_date": latest, "published_at": published_at, "message": "" if latest else "尚未发布"}

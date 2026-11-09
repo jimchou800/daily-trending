@@ -8,7 +8,7 @@ import re
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
-from .contracts import require, require_date, require_github_url, require_timestamp
+from .contracts import require, require_date, require_github_url, require_timestamp, validate_public_report
 from .organizer import render_html
 from .scheduler import render_homepage
 
@@ -74,6 +74,7 @@ def publish_report(report: dict, html_content: str, site_root: Path, published_a
     require_date(report.get("report_date"), "report_date")
     require_timestamp(published_at, "published_at")
     require(report.get("status") in ("published", "sample_preview"), "report is not publishable")
+    validate_public_report(report)
     beijing = timezone(timedelta(hours=8))
     current_time = now.astimezone(beijing) if now else datetime.now(beijing)
     deadline = datetime.combine(datetime.fromisoformat(report["report_date"]).date(), time(9, 0), beijing)
@@ -192,16 +193,26 @@ def correct_report(
     old_json = target.read_bytes()
     old_html = page.read_bytes()
     old_home = homepage.read_bytes() if temporary_home else None
+    history_path = root / "history.json"
+    old_history = history_path.read_bytes() if history_path.exists() else None
     try:
         os.replace(temporary_json, target)
         os.replace(temporary_html, page)
         if temporary_home:
             os.replace(temporary_home, homepage)
+        if history_path.exists():
+            history = load_successful_history(root)
+            for index, item in enumerate(history):
+                if item.get("report_date") == date:
+                    history[index] = updated
+            _write_json_atomic(history_path, history)
     except Exception:
         target.write_bytes(old_json)
         page.write_bytes(old_html)
         if old_home is not None:
             homepage.write_bytes(old_home)
+        if old_history is not None:
+            history_path.write_bytes(old_history)
         for temporary in (temporary_json, temporary_html, temporary_home):
             if temporary and temporary.exists():
                 temporary.unlink()

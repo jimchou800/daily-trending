@@ -7,8 +7,15 @@ from daily_trending.publisher import load_successful_history, publish_report
 
 
 class PublishTests(unittest.TestCase):
+    def test_incomplete_report_is_rejected_before_any_publication_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "missing report field"):
+                publish_report({"report_date": "2026-11-09", "status": "published"}, "", root, "2026-11-09T00:30:00Z")
+            self.assertFalse((root / "archive").exists())
+
     def test_idempotent_archive_preserves_first_publish_time(self):
-        report = {"report_date": "2026-11-09", "status": "sample_preview", "html": "<main>ok</main>"}
+        report = {"report_date": "2026-11-09", "status": "sample_preview", "contract_version": "1.0", "timezone": "Asia/Shanghai", "collected_at": "2026-11-09T00:00:00Z", "source": "https://github.com/trending?since=daily", "scope": "GitHub Trending Daily（全部编程语言）", "entry_count": 0, "entries": []}
         with tempfile.TemporaryDirectory() as directory:
             path = publish_report(report, "<main>ok</main>", Path(directory), "2026-11-09T00:30:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T08:00:00+08:00"))
             publish_report(report, "<main>ok</main>", Path(directory), "2026-11-09T01:00:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T08:30:00+08:00"))
@@ -19,14 +26,14 @@ class PublishTests(unittest.TestCase):
             self.assertIn("Asia/Shanghai", homepage)
 
     def test_late_publication_is_rejected_before_writing(self):
-        report = {"report_date": "2026-11-09", "status": "published"}
+        report = {"report_date": "2026-11-09", "status": "published", "contract_version": "1.0", "timezone": "Asia/Shanghai", "collected_at": "2026-11-09T00:00:00Z", "source": "https://github.com/trending?since=daily", "scope": "GitHub Trending Daily（全部编程语言）", "entry_count": 0, "entries": []}
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
                 publish_report(report, "", Path(directory), "2026-11-09T01:05:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T09:05:00+08:00"))
             self.assertFalse((Path(directory) / "archive").exists())
 
     def test_successful_history_is_persisted_once_and_recovery_completes(self):
-        report = {"report_date": "2026-11-09", "status": "sample_preview", "entries": []}
+        report = {"report_date": "2026-11-09", "status": "sample_preview", "contract_version": "1.0", "timezone": "Asia/Shanghai", "collected_at": "2026-11-09T00:00:00Z", "source": "https://github.com/trending?since=daily", "scope": "GitHub Trending Daily（全部编程语言）", "entry_count": 0, "entries": []}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             import unittest.mock

@@ -130,6 +130,12 @@ def analyze_live_snapshot(
                 cached = cache_store.load_analysis(entry["repository"], snapshot["snapshot_id"], client.config.model)
                 if cached is not None:
                     analyses.append(_validated_entry(snapshot, entry, cached))
+                    cached_sources = source_loader(entry) if source_loader else load_github_sources(entry)
+                    releases = cached_sources.get("releases", []) if isinstance(cached_sources, dict) else []
+                    release_evidence[entry["repository"]] = [
+                        release for release in releases
+                        if isinstance(release, dict) and release.get("draft") is False and release.get("prerelease") is False
+                    ]
                     completed = True
                     continue
             source = source_loader(entry) if source_loader else load_github_sources(entry)

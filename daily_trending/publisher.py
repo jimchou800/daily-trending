@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
-from .contracts import require, require_date, require_timestamp
+from .contracts import require, require_date, require_github_url, require_timestamp
+from .organizer import render_html
 
 
 def publish_report(report: dict, html_content: str, site_root: Path, published_at: str, *, now: datetime | None = None) -> Path:
@@ -44,3 +46,113 @@ def publish_report(report: dict, html_content: str, site_root: Path, published_a
     temporary_index.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary_index, index)
     return target
+
+
+def correct_report(
+    corrected_report: dict,
+    site_root: Path,
+    corrected_at: str,
+    note: str,
+) -> Path:
+    """Replace facts in an existing report while preserving its identity and history.
+
+    The report date, source, publication timestamp, selected entries, and history
+    are immutable.  A correction is recorded on the same archive path and the
+    latest homepage is updated only when it already exists.
+    """
+    require(isinstance(corrected_report, dict), "report must be an object")
+    require_timestamp(corrected_at, "corrected_at")
+    require(isinstance(note, str) and note.strip(), "correction note is required")
+    date = corrected_report.get("report_date")
+    require_date(date, "report_date")
+    root = Path(site_root)
+    archive = root / "archive" / date
+    target = archive / "report.json"
+    page = archive / "index.html"
+    require(target.exists() and page.exists(), "published report does not exist")
+    existing = json.loads(target.read_text(encoding="utf-8"))
+    require(existing.get("status") == "published", "only published reports can be corrected")
+    require_github_url(existing.get("source", existing.get("source_url", "https://github.com/trending?since=daily")), "source")
+    for field in ("report_date", "source", "source_url", "history", "snapshot_id"):
+        if field in existing or field in corrected_report:
+            require(corrected_report.get(field) == existing.get(field), f"immutable field: {field}")
+    require(corrected_report.get("published_at", existing.get("published_at")) == existing.get("published_at"), "immutable field: published_at")
+    require(corrected_report.get("status", existing.get("status")) == "published", "immutable field: status")
+    entries = existing.get("entries")
+    replacement_entries = corrected_report.get("entries", entries)
+    require(isinstance(entries, list) and isinstance(replacement_entries, list) and len(entries) == len(replacement_entries), "immutable selection")
+    for before, after in zip(entries, replacement_entries):
+        require(isinstance(before, dict) and isinstance(after, dict), "invalid report entry")
+        required = ("repository", "repository_url", "rank", "ai_relevance_evidence", "project_type", "introduction", "problem_solved", "audience", "characteristics", "heat", "sources")
+        require(all(field in after for field in required), "analysis entry is incomplete")
+        for field in ("repository", "repository_url", "rank", "heat"):
+            require(after.get(field) == before.get(field), f"immutable selection field: {field}")
+        require_github_url(after.get("repository_url", ""), "repository")
+        sources = after.get("sources")
+        require(isinstance(sources, list) and bool(sources), "analysis sources are missing")
+        for source in sources:
+            require_github_url(source, "analysis source")
+        heat = after.get("heat")
+        require(isinstance(heat, dict), "invalid heat metrics")
+        require(heat.get("stars_today") is None or isinstance(heat.get("stars_today"), int), "invalid stars_today")
+        require(heat.get("stars_total") is None or isinstance(heat.get("stars_total"), int), "invalid stars_total")
+    updated = dict(existing)
+    for key, value in corrected_report.items():
+        if key not in {"report_date", "source", "source_url", "history", "snapshot_id", "entries", "published_at", "status", "correction", "corrections"}:
+            updated[key] = value
+    if "entries" in corrected_report:
+        updated["entries"] = replacement_entries
+    correction = {"corrected_at": corrected_at, "note": note.strip()}
+    corrections = list(existing.get("corrections", []))
+    if existing.get("correction"):
+        corrections.append(existing["correction"])
+    corrections.append(correction)
+    updated["corrections"] = corrections
+    updated["correction"] = correction
+
+    require(updated.get("entry_count") == len(updated["entries"]), "invalid report entry count")
+    require_timestamp(updated.get("collected_at"), "collected_at")
+    require_github_url(updated.get("source", ""), "source")
+    html_content = render_html(updated)
+    correction_banner = (
+        '<aside class="correction"><strong>内容更正</strong> · '
+        f'{html_escape(corrected_at)} · {html_escape(note.strip())}</aside>'
+    )
+    require(re.search(r"</main\s*>", html_content, flags=re.IGNORECASE) is not None, "corrected page must contain main")
+    html_content = re.sub(r"</main\s*>", correction_banner + "</main>", html_content, count=1, flags=re.IGNORECASE)
+    temporary_json = target.with_suffix(".correction.tmp")
+    temporary_html = page.with_suffix(".correction.tmp")
+    temporary_json.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary_html.write_text(html_content, encoding="utf-8")
+    homepage = root / "index.html"
+    index_path = root / "index.json"
+    index_data = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {}
+    is_latest = index_data.get("latest_report_date") == date
+    temporary_home = homepage.with_suffix(".correction.tmp") if is_latest and homepage.exists() else None
+    if temporary_home:
+        temporary_home.write_text(html_content, encoding="utf-8")
+    old_json = target.read_bytes()
+    old_html = page.read_bytes()
+    old_home = homepage.read_bytes() if temporary_home else None
+    try:
+        os.replace(temporary_json, target)
+        os.replace(temporary_html, page)
+        if temporary_home:
+            os.replace(temporary_home, homepage)
+    except Exception:
+        target.write_bytes(old_json)
+        page.write_bytes(old_html)
+        if old_home is not None:
+            homepage.write_bytes(old_home)
+        for temporary in (temporary_json, temporary_html, temporary_home):
+            if temporary and temporary.exists():
+                temporary.unlink()
+        raise
+    return target
+
+
+def html_escape(value: str) -> str:
+    """Escape correction metadata before embedding it in a static page."""
+    import html
+
+    return html.escape(value, quote=True)

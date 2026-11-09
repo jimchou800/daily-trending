@@ -8,13 +8,9 @@ import re
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
-<<<<<<< HEAD
 from .contracts import require, require_date, require_github_url, require_timestamp
 from .organizer import render_html
-=======
-from .contracts import require, require_date, require_timestamp
 from .scheduler import render_homepage
->>>>>>> integration
 
 
 def publish_report(report: dict, html_content: str, site_root: Path, published_at: str, *, now: datetime | None = None) -> Path:
@@ -138,7 +134,7 @@ def correct_report(
     is_latest = index_data.get("latest_report_date") == date
     temporary_home = homepage.with_suffix(".correction.tmp") if is_latest and homepage.exists() else None
     if temporary_home:
-        temporary_home.write_text(html_content, encoding="utf-8")
+        temporary_home.write_text(render_homepage(html_content), encoding="utf-8")
     old_json = target.read_bytes()
     old_html = page.read_bytes()
     old_home = homepage.read_bytes() if temporary_home else None

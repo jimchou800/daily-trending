@@ -12,7 +12,7 @@ from .collector import collect_snapshot, collect_trending
 from .dashscope import DashScopeClient
 from .organizer import organize_report, write_report
 from .persistence import ArtifactStore
-from .selection import filter_repeat_entries
+from .selection import filter_repeat_entries, load_published_history
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,7 @@ def run_live_pipeline(
     source_loader: Callable[[dict], dict] | None = None,
     artifact_root: Path | None = None,
     history: list[dict] | None = None,
+    history_root: Path | None = None,
     releases_by_repository: dict[str, list[dict]] | None = None,
 ) -> PipelineResult:
     """Collect the live Daily snapshot, analyze it, and write a preview artifact."""
@@ -83,8 +84,10 @@ def run_live_pipeline(
                 store.save("analyzer", analysis)
         analyzer_path = output_dir / "analyzer.json"
         analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        successful_history = history if history is not None else load_published_history(history_root) if history_root else []
+        release_evidence = releases_by_repository if releases_by_repository is not None else analysis.get("release_evidence", {})
         analysis["analyses"], decisions = filter_repeat_entries(
-            analysis["analyses"], issue_date, history or [], releases_by_repository=releases_by_repository
+            analysis["analyses"], issue_date, successful_history, releases_by_repository=release_evidence
         )
         (output_dir / "selection.json").write_text(json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         report = organize_report(analysis)

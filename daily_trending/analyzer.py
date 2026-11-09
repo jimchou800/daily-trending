@@ -122,6 +122,7 @@ def analyze_live_snapshot(
     require(isinstance(entries, list), "snapshot entries are missing")
     analyses: list[dict] = []
     errors: list[str] = []
+    release_evidence: dict[str, list[dict]] = {}
     completed = False
     for entry in entries:
         try:
@@ -132,6 +133,11 @@ def analyze_live_snapshot(
                     completed = True
                     continue
             source = source_loader(entry) if source_loader else load_github_sources(entry)
+            releases = source.get("releases", []) if isinstance(source, dict) else []
+            release_evidence[entry["repository"]] = [
+                release for release in releases
+                if isinstance(release, dict) and release.get("draft") is False and release.get("prerelease") is False
+            ]
             prompt_entry = dict(entry)
             prompt_entry["github_sources"] = source
             raw = client.complete(build_analysis_prompt([prompt_entry]))
@@ -164,6 +170,7 @@ def analyze_live_snapshot(
         "stage": {"name": "analyzer", "status": status, "errors": errors},
         "snapshot": {"source_url": source["source_url"], "scope": source["scope"], "collected_at": source["collected_at"]},
         "analyses": analyses,
+        "release_evidence": release_evidence,
     }
 
 

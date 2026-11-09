@@ -1,6 +1,10 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 from daily_trending.selection import filter_repeat_entries
+from daily_trending.pipeline import run_sample_pipeline
 
 
 def item(repository, rank, stars_today=10):
@@ -67,6 +71,24 @@ class RepeatSelectionTests(unittest.TestCase):
         candidates[0] = item("acme/repo", 1, 12)
         selected, _ = filter_repeat_entries(candidates, "2026-11-08", history)
         self.assertEqual([entry["rank"] for entry in selected], [2, 3, 4, 5, 6])
+
+    def test_sample_pipeline_filters_before_report_render_and_keeps_decisions_internal(self):
+        history = [{"report_date": "2026-11-07", "status": "published", "entries": [item("example/alpha", 1, 321)]}]
+        fixtures = Path(__file__).parent / "fixtures"
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_sample_pipeline(
+                fixtures / "trending_snapshot.json",
+                fixtures / "model_responses.json",
+                Path(directory),
+                "2026-11-08",
+                "2026-11-08T00:00:00Z",
+                history=history,
+            )
+            report = json.loads(result.report_path.read_text(encoding="utf-8"))
+            decisions = json.loads((Path(directory) / "selection.json").read_text(encoding="utf-8"))
+            self.assertNotIn("example/alpha", [entry["repository"] for entry in report["entries"]])
+            self.assertIn("recent_duplicate", [decision["reason"] for decision in decisions])
+            self.assertNotIn("recent_duplicate", result.html_path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

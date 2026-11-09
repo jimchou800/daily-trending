@@ -4,11 +4,26 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import date, datetime, time, timedelta, timezone
+import json
+from pathlib import Path
 
 from .contracts import require, require_date
 
 BEIJING = timezone(timedelta(hours=8))
 WINDOW = timedelta(hours=168)
+
+
+def load_published_history(site_root: Path) -> list[dict]:
+    """Read valid published issue JSON files from a static site's archive."""
+    reports: list[dict] = []
+    for path in (Path(site_root) / "archive").glob("*/report.json"):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(report, dict) and report.get("status") == "published" and report.get("report_date") == path.parent.name:
+            reports.append(report)
+    return reports
 
 
 def _period_start(value: str) -> datetime:
@@ -37,7 +52,7 @@ def _heat(entry: dict) -> dict:
 
 def _formal_release_after(releases: list[dict], previous: datetime) -> bool:
     for release in releases:
-        if not isinstance(release, dict) or release.get("draft") is True or release.get("prerelease") is True:
+        if not isinstance(release, dict) or release.get("draft") is not False or release.get("prerelease") is not False:
             continue
         published_at = release.get("published_at")
         if not isinstance(published_at, str):

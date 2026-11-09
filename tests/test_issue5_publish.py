@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from daily_trending.publisher import publish_report
+from daily_trending.publisher import load_successful_history, publish_report
 
 
 class PublishTests(unittest.TestCase):
@@ -24,6 +24,30 @@ class PublishTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 publish_report(report, "", Path(directory), "2026-11-09T01:05:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T09:05:00+08:00"))
             self.assertFalse((Path(directory) / "archive").exists())
+
+    def test_successful_history_is_persisted_once_and_recovery_completes(self):
+        report = {"report_date": "2026-11-09", "status": "sample_preview", "entries": []}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            import unittest.mock
+            real_replace = __import__("os").replace
+            calls = 0
+
+            def fail_once(source, destination):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("interrupted publication")
+                return real_replace(source, destination)
+
+            with unittest.mock.patch("daily_trending.publisher.os.replace", side_effect=fail_once):
+                with self.assertRaisesRegex(OSError, "interrupted"):
+                    publish_report(report, "<main>ok</main>", root, "2026-11-09T00:30:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T08:00:00+08:00"))
+            self.assertTrue((root / ".publication-transaction.json").exists())
+            publish_report(report, "<main>ok</main>", root, "2026-11-09T01:00:00Z", now=__import__("datetime").datetime.fromisoformat("2026-11-09T08:30:00+08:00"))
+            self.assertFalse((root / ".publication-transaction.json").exists())
+            self.assertEqual([item["report_date"] for item in load_successful_history(root)], ["2026-11-09"])
+            self.assertEqual(len(json.loads((root / "history.json").read_text(encoding="utf-8"))), 1)
 
 
 if __name__ == "__main__":

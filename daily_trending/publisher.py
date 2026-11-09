@@ -12,6 +12,62 @@ from .contracts import require, require_date, require_github_url, require_timest
 from .organizer import render_html
 from .scheduler import render_homepage
 
+TRANSACTION_FILE = ".publication-transaction.json"
+
+
+def load_successful_history(site_root: Path) -> list[dict]:
+    """Load successfully published reports in descending report-date order."""
+    root = Path(site_root)
+    history_path = root / "history.json"
+    try:
+        data = json.loads(history_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict) and item.get("status") == "published"]
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    reports = []
+    for path in (root / "archive").glob("*/report.json") if (root / "archive").exists() else []:
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            if report.get("status") == "published":
+                reports.append(report)
+        except (OSError, ValueError, json.JSONDecodeError, AttributeError):
+            continue
+    return sorted(reports, key=lambda item: item.get("report_date", ""), reverse=True)
+
+
+def _write_json_atomic(path: Path, value: object) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _recover_publication(root: Path) -> None:
+    """Complete a publication left between atomic file replacements."""
+    manifest_path = root / TRANSACTION_FILE
+    if not manifest_path.exists():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    report = manifest["report"]
+    archive = root / "archive" / report["report_date"]
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "index.html").write_text(manifest["html"], encoding="utf-8")
+    _write_json_atomic(archive / "report.json", report)
+    index_path = root / "index.json"
+    try:
+        current_index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        current_index = {}
+    is_current = current_index.get("latest_report_date", "") <= report["report_date"]
+    if is_current:
+        _write_json_atomic(index_path, manifest["index"])
+        (root / "index.html.tmp").write_text(manifest["homepage"], encoding="utf-8")
+        os.replace(root / "index.html.tmp", root / "index.html")
+    history_by_date = {item.get("report_date"): item for item in load_successful_history(root) if item.get("report_date")}
+    history_by_date.setdefault(report["report_date"], report)
+    merged_history = sorted(history_by_date.values(), key=lambda item: item.get("report_date", ""), reverse=True)
+    _write_json_atomic(root / "history.json", merged_history)
+    manifest_path.unlink(missing_ok=True)
 
 def publish_report(report: dict, html_content: str, site_root: Path, published_at: str, *, now: datetime | None = None) -> Path:
     """Publish a report before its Beijing deadline and commit the index last."""
@@ -26,16 +82,13 @@ def publish_report(report: dict, html_content: str, site_root: Path, published_a
     report["published_at"] = published_at
     report["status"] = "published"
     root = Path(site_root)
+    _recover_publication(root)
     archive = root / "archive" / report["report_date"]
     archive.mkdir(parents=True, exist_ok=True)
     target = archive / "report.json"
     if target.exists():
         existing = json.loads(target.read_text(encoding="utf-8"))
         report["published_at"] = existing.get("published_at", published_at)
-    temporary = target.with_suffix(".tmp")
-    temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, target)
-    (archive / "index.html").write_text(html_content, encoding="utf-8")
     index = root / "index.json"
     current = json.loads(index.read_text(encoding="utf-8")) if index.exists() else {}
     if current.get("latest_report_date", "") > report["report_date"]:
@@ -43,12 +96,13 @@ def publish_report(report: dict, html_content: str, site_root: Path, published_a
     current["latest_report_date"] = report["report_date"]
     current["published_at"] = report["published_at"]
     current["archive_dates"] = sorted(set(current.get("archive_dates", [])) | {report["report_date"]}, reverse=True)
-    temporary_index = index.with_suffix(".tmp")
-    temporary_index.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary_index, index)
-    homepage_temporary = root / "index.html.tmp"
-    homepage_temporary.write_text(render_homepage(html_content), encoding="utf-8")
-    os.replace(homepage_temporary, root / "index.html")
+    history = load_successful_history(root)
+    if not any(item.get("report_date") == report["report_date"] for item in history):
+        history.append(report)
+    history.sort(key=lambda item: item.get("report_date", ""), reverse=True)
+    manifest = {"report": report, "html": html_content, "homepage": render_homepage(html_content), "index": current, "history": history}
+    _write_json_atomic(root / TRANSACTION_FILE, manifest)
+    _recover_publication(root)
     return target
 
 

@@ -10,6 +10,8 @@ from typing import Any
 from .contracts import CONTRACT_VERSION, require_date
 
 MAX_RETRIES = 2
+ARTIFACT_SCHEMA_VERSION = "1"
+ANALYSIS_SCHEMA_VERSION = "1"
 
 
 class ArtifactStore:
@@ -24,11 +26,13 @@ class ArtifactStore:
 
     def _read_state(self) -> dict[str, Any]:
         if not self.state_path.exists():
-            return {"period_id": self.directory.name, "attempts": 0, "run_count": 0, "status": "pending", "failures": [], "estimated_spend_cny": 0.0}
+            return {"period_id": self.directory.name, "attempts": 0, "run_count": 0, "status": "pending", "failures": [], "estimated_spend_cny": 0.0, "artifact_schema": ARTIFACT_SCHEMA_VERSION}
         try:
             state = json.loads(self.state_path.read_text(encoding="utf-8"))
             if state.get("period_id") != self.directory.name:
                 raise ValueError("state period mismatch")
+            if state.get("artifact_schema", ARTIFACT_SCHEMA_VERSION) != ARTIFACT_SCHEMA_VERSION:
+                raise ValueError("unsupported state schema")
             return state
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError("run state is corrupt") from exc
@@ -42,6 +46,8 @@ class ArtifactStore:
         """Atomically save a complete stage artifact after basic identity checks."""
         if artifact.get("contract_version") != CONTRACT_VERSION or artifact.get("period_id") != self.directory.name:
             raise ValueError("artifact identity mismatch")
+        if artifact.get("stage", {}).get("name") != stage:
+            raise ValueError("artifact stage mismatch")
         if artifact.get("stage", {}).get("status") != "succeeded":
             raise ValueError("only succeeded artifacts may be cached")
         path = self.directory / f"{stage}.json"
@@ -50,7 +56,7 @@ class ArtifactStore:
         os.replace(temporary, path)
         return path
 
-    def load_compatible(self, stage: str, snapshot_id: str | None = None) -> dict[str, Any] | None:
+    def load_compatible(self, stage: str, snapshot_id: str | None = None, model: str | None = None) -> dict[str, Any] | None:
         """Load a valid cached stage, rejecting corruption, wrong stage, period, or snapshot."""
         path = self.directory / f"{stage}.json"
         try:
@@ -61,6 +67,8 @@ class ArtifactStore:
             if current.get("name") != stage or current.get("status") != "succeeded":
                 return None
             if snapshot_id is not None and artifact.get("snapshot_id") != snapshot_id:
+                return None
+            if model is not None and artifact.get("model") != model:
                 return None
             return artifact
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
@@ -104,8 +112,10 @@ class ArtifactStore:
         try:
             cache = json.loads(path.read_text(encoding="utf-8"))
             item = cache.get(repository)
-            if item and item.get("contract_version") == CONTRACT_VERSION and item.get("snapshot_id") == snapshot_id and item.get("model") == model:
-                return item.get("analysis")
+            if item and item.get("contract_version") == CONTRACT_VERSION and item.get("schema") == ANALYSIS_SCHEMA_VERSION and item.get("snapshot_id") == snapshot_id and item.get("model") == model:
+                analysis = item.get("analysis")
+                if isinstance(analysis, dict) and analysis.get("repository") == repository:
+                    return analysis
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
             return None
         return None
@@ -117,7 +127,7 @@ class ArtifactStore:
             cache = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         except (OSError, ValueError, json.JSONDecodeError):
             cache = {}
-        cache[repository] = {"contract_version": CONTRACT_VERSION, "snapshot_id": snapshot_id, "model": model, "analysis": analysis}
+        cache[repository] = {"contract_version": CONTRACT_VERSION, "schema": ANALYSIS_SCHEMA_VERSION, "snapshot_id": snapshot_id, "model": model, "analysis": analysis}
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(cache, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, path)

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
+from typing import Any, Callable
 
 from .contracts import CONTRACT_VERSION, require, require_github_url, validate_common_artifact
+from .dashscope import DashScopeClient, build_analysis_prompt
+from .github_sources import load_github_sources
 
 
 def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str | None = None) -> dict:
@@ -86,6 +90,61 @@ def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str |
         status = "failed"
     else:
         status = "succeeded"
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "period_id": snapshot["period_id"],
+        "snapshot_id": snapshot["snapshot_id"],
+        "stage": {"name": "analyzer", "status": status, "errors": errors},
+        "snapshot": {"source_url": source["source_url"], "scope": source["scope"], "collected_at": source["collected_at"]},
+        "analyses": analyses,
+    }
+
+
+def analyze_live_snapshot(
+    snapshot: dict,
+    client: DashScopeClient,
+    source_loader: Callable[[dict], dict[str, Any]] | None = None,
+    *,
+    expected_period: str | None = None,
+) -> dict:
+    """Analyze each collected repository through DashScope in source order.
+
+    A candidate failure is recorded and does not prevent later candidates from
+    being attempted. If no candidate produces a reliable analysis, the stage
+    remains failed rather than becoming a false zero-project result.
+    """
+    validate_common_artifact(snapshot, "collector")
+    if expected_period is not None and snapshot["period_id"] != expected_period:
+        raise ValueError("period does not match requested run")
+    entries = snapshot["snapshot"].get("entries")
+    require(isinstance(entries, list), "snapshot entries are missing")
+    analyses: list[dict] = []
+    errors: list[str] = []
+    completed = False
+    for entry in entries:
+        try:
+            source = source_loader(entry) if source_loader else load_github_sources(entry)
+            prompt_entry = dict(entry)
+            prompt_entry["github_sources"] = source
+            raw = client.complete(build_analysis_prompt([prompt_entry]))
+            decoded = json.loads(raw)
+            responses = decoded.get("analyses") if isinstance(decoded, dict) and isinstance(decoded.get("analyses"), list) else [decoded]
+            if not isinstance(decoded, dict) or not isinstance(responses, list):
+                raise ValueError("model analyses are not an object")
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as response_file:
+                json.dump({"snapshot_id": snapshot["snapshot_id"], "analyses": responses}, response_file)
+                response_path = Path(response_file.name)
+            try:
+                result = analyze_snapshot(snapshot, response_path, expected_period=expected_period)
+            finally:
+                response_path.unlink(missing_ok=True)
+            completed = True
+            analyses.extend(result["analyses"])
+            errors.extend(result["stage"]["errors"])
+        except Exception as exc:  # isolated candidate failure by contract
+            errors.append(f"analysis failed for {entry['repository']}: {exc}")
+    status = "succeeded" if completed else "failed"
+    source = snapshot["snapshot"]
     return {
         "contract_version": CONTRACT_VERSION,
         "period_id": snapshot["period_id"],

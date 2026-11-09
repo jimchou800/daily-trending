@@ -48,7 +48,14 @@ def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str |
             continue
         if not response["is_ai"]:
             continue
-        required = ("ai_relevance_evidence", "project_type", "introduction", "problem_solved", "audience", "characteristics")
+        required = (
+            "ai_relevance_evidence",
+            "project_type",
+            "introduction",
+            "problem_solved",
+            "audience",
+            "characteristics",
+        )
         if any(not isinstance(response.get(field), str) or not response[field].strip() for field in required):
             errors.append(f"incomplete analysis for {entry['repository']}")
             continue
@@ -96,7 +103,11 @@ def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str |
         "period_id": snapshot["period_id"],
         "snapshot_id": snapshot["snapshot_id"],
         "stage": {"name": "analyzer", "status": status, "errors": errors},
-        "snapshot": {"source_url": source["source_url"], "scope": source["scope"], "collected_at": source["collected_at"]},
+        "snapshot": {
+            "source_url": source["source_url"],
+            "scope": source["scope"],
+            "collected_at": source["collected_at"],
+        },
         "analyses": analyses,
     }
 
@@ -133,22 +144,30 @@ def analyze_live_snapshot(
                     cached_sources = source_loader(entry) if source_loader else load_github_sources(entry)
                     releases = cached_sources.get("releases", []) if isinstance(cached_sources, dict) else []
                     release_evidence[entry["repository"]] = [
-                        release for release in releases
-                        if isinstance(release, dict) and release.get("draft") is False and release.get("prerelease") is False
+                        release
+                        for release in releases
+                        if isinstance(release, dict)
+                        and release.get("draft") is False
+                        and release.get("prerelease") is False
                     ]
                     completed = True
                     continue
             source = source_loader(entry) if source_loader else load_github_sources(entry)
             releases = source.get("releases", []) if isinstance(source, dict) else []
             release_evidence[entry["repository"]] = [
-                release for release in releases
+                release
+                for release in releases
                 if isinstance(release, dict) and release.get("draft") is False and release.get("prerelease") is False
             ]
             prompt_entry = dict(entry)
             prompt_entry["github_sources"] = source
             raw = client.complete(build_analysis_prompt([prompt_entry]))
             decoded = json.loads(raw)
-            responses = decoded.get("analyses") if isinstance(decoded, dict) and isinstance(decoded.get("analyses"), list) else [decoded]
+            responses = (
+                decoded.get("analyses")
+                if isinstance(decoded, dict) and isinstance(decoded.get("analyses"), list)
+                else [decoded]
+            )
             if not isinstance(decoded, dict) or not isinstance(responses, list):
                 raise ValueError("model analyses are not an object")
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as response_file:
@@ -161,9 +180,18 @@ def analyze_live_snapshot(
             completed = True
             analyses.extend(result["analyses"])
             if cache_store and result["analyses"]:
-                cached_response = next((item for item in responses if isinstance(item, dict) and item.get("repository") == entry["repository"]), None)
+                cached_response = next(
+                    (
+                        item
+                        for item in responses
+                        if isinstance(item, dict) and item.get("repository") == entry["repository"]
+                    ),
+                    None,
+                )
                 if cached_response is not None:
-                    cache_store.save_analysis(entry["repository"], snapshot["snapshot_id"], client.config.model, cached_response)
+                    cache_store.save_analysis(
+                        entry["repository"], snapshot["snapshot_id"], client.config.model, cached_response
+                    )
             errors.extend(result["stage"]["errors"])
         except Exception as exc:  # isolated candidate failure by contract
             errors.append(f"analysis failed for {entry['repository']}: {exc}")
@@ -174,7 +202,11 @@ def analyze_live_snapshot(
         "period_id": snapshot["period_id"],
         "snapshot_id": snapshot["snapshot_id"],
         "stage": {"name": "analyzer", "status": status, "errors": errors},
-        "snapshot": {"source_url": source["source_url"], "scope": source["scope"], "collected_at": source["collected_at"]},
+        "snapshot": {
+            "source_url": source["source_url"],
+            "scope": source["scope"],
+            "collected_at": source["collected_at"],
+        },
         "analyses": analyses,
         "release_evidence": release_evidence,
     }
@@ -183,6 +215,7 @@ def analyze_live_snapshot(
 def _validated_entry(snapshot: dict, entry: dict, response: dict) -> dict:
     """Validate a cached response through the same analyzer contract as fresh output."""
     from tempfile import NamedTemporaryFile
+
     with NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
         json.dump({"snapshot_id": snapshot["snapshot_id"], "analyses": [response]}, handle)
         path = Path(handle.name)

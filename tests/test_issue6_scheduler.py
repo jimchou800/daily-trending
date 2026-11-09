@@ -46,6 +46,13 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(scheduler.status()["message"], "当月生成额度已用尽")
         self.assertFalse(scheduler.start_attempt(0.01))
 
+    def test_scheduler_reports_retry_exhaustion_and_ready_state(self):
+        scheduler = BeijingScheduler("2026-11-09", now=lambda: datetime(2026, 11, 9, 8, tzinfo=BEIJING))
+        self.assertEqual(scheduler.status()["status"], "ready")
+        for _ in range(3):
+            self.assertTrue(scheduler.start_attempt())
+        self.assertEqual(scheduler.status()["status"], "retry_exhausted")
+
     def test_homepage_reports_never_published_and_missing_without_touching_history(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -98,9 +105,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(run_with_retries(scheduler, attempt), "published")
         self.assertEqual(calls, [1, 2, 3])
 
-        late = BeijingScheduler(
-            "2026-11-09", now=lambda: datetime(2026, 11, 9, 9, tzinfo=BEIJING)
-        )
+        late = BeijingScheduler("2026-11-09", now=lambda: datetime(2026, 11, 9, 9, tzinfo=BEIJING))
         with self.assertRaises(TimeoutError):
             run_with_retries(late, lambda _: self.fail("late attempt must not run"))
 

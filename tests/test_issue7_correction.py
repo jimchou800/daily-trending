@@ -17,7 +17,22 @@ class CorrectionTests(unittest.TestCase):
             "entry_count": 1,
             "scope": "GitHub Trending Daily（全部编程语言）",
             "source": "https://github.com/trending?since=daily",
-            "entries": [{"repository": "acme/project", "repository_url": "https://github.com/acme/project", "rank": 1, "heat": {"stars_today": 10, "stars_total": 100}, "sources": ["https://github.com/acme/project"], "ai_relevance_evidence": "AI tool", "project_type": "tool", "introduction": "Original", "problem_solved": "problem", "audience": "engineers", "characteristics": "feature", "reason_has_evidence": False}],
+            "entries": [
+                {
+                    "repository": "acme/project",
+                    "repository_url": "https://github.com/acme/project",
+                    "rank": 1,
+                    "heat": {"stars_today": 10, "stars_total": 100},
+                    "sources": ["https://github.com/acme/project"],
+                    "ai_relevance_evidence": "AI tool",
+                    "project_type": "tool",
+                    "introduction": "Original",
+                    "problem_solved": "problem",
+                    "audience": "engineers",
+                    "characteristics": "feature",
+                    "reason_has_evidence": False,
+                }
+            ],
             "history": [{"repo": "acme/project", "period": "2026-11-01"}],
         }
         path = publish_report(
@@ -33,7 +48,9 @@ class CorrectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             original = self._published_site(root)
-            corrected = dict(original, entries=[dict(original["entries"][0], introduction="Corrected source-backed description.")])
+            corrected = dict(
+                original, entries=[dict(original["entries"][0], introduction="Corrected source-backed description.")]
+            )
             path = correct_report(
                 corrected,
                 root,
@@ -74,10 +91,18 @@ class CorrectionTests(unittest.TestCase):
             homepage = root / "index.html"
             homepage.write_text("<main>newest</main>")
             old = json.loads((root / "archive" / "2026-11-08" / "report.json").read_text())
-            correct_report(dict(old, entries=[dict(old["entries"][0], introduction="fixed")]), root, "2026-11-09T02:00:00Z", "历史修正")
+            correct_report(
+                dict(old, entries=[dict(old["entries"][0], introduction="fixed")]),
+                root,
+                "2026-11-09T02:00:00Z",
+                "历史修正",
+            )
             self.assertEqual((root / "index.json").read_text(), index_before)
             self.assertEqual(homepage.read_text(), "<main>newest</main>")
-            self.assertEqual(json.loads((root / "archive" / "2026-11-09" / "report.json").read_text())["published_at"], "2026-11-09T00:30:00Z")
+            self.assertEqual(
+                json.loads((root / "archive" / "2026-11-09" / "report.json").read_text())["published_at"],
+                "2026-11-09T00:30:00Z",
+            )
 
     def test_latest_correction_refreshes_homepage_and_failure_restores_archive(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -89,6 +114,7 @@ class CorrectionTests(unittest.TestCase):
             page = target.with_name("index.html")
             original_json, original_html, original_home = target.read_bytes(), page.read_bytes(), homepage.read_bytes()
             import unittest.mock
+
             real_replace = __import__("os").replace
             calls = 0
 
@@ -101,7 +127,12 @@ class CorrectionTests(unittest.TestCase):
 
             with unittest.mock.patch("daily_trending.publisher.os.replace", side_effect=fail_on_page):
                 with self.assertRaisesRegex(OSError, "simulated"):
-                    correct_report(dict(original, entries=[dict(original["entries"][0], introduction="new")]), root, "2026-11-09T02:00:00Z", "修正")
+                    correct_report(
+                        dict(original, entries=[dict(original["entries"][0], introduction="new")]),
+                        root,
+                        "2026-11-09T02:00:00Z",
+                        "修正",
+                    )
             self.assertEqual(target.read_bytes(), original_json)
             self.assertEqual(page.read_bytes(), original_html)
             self.assertEqual(homepage.read_bytes(), original_home)

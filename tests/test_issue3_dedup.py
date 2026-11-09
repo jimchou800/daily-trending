@@ -46,8 +46,18 @@ class RepeatSelectionTests(unittest.TestCase):
 
     def test_recent_repeat_requires_new_formal_release_or_same_metric_star_doubling(self):
         candidates = [item("acme/recent", 1, 20), item("acme/released", 2, 11), item("acme/nochange", 3, 10)]
-        history = [{"report_date": "2026-11-07", "status": "published", "entries": [item("acme/recent", 1, 10), item("acme/released", 2, 10), item("acme/nochange", 3, 10)]}]
-        releases = {"acme/released": [{"tag_name": "v2", "draft": False, "prerelease": False, "published_at": "2026-11-08T00:00:00Z"}]}
+        history = [
+            {
+                "report_date": "2026-11-07",
+                "status": "published",
+                "entries": [item("acme/recent", 1, 10), item("acme/released", 2, 10), item("acme/nochange", 3, 10)],
+            }
+        ]
+        releases = {
+            "acme/released": [
+                {"tag_name": "v2", "draft": False, "prerelease": False, "published_at": "2026-11-08T00:00:00Z"}
+            ]
+        }
         selected, decisions = filter_repeat_entries(candidates, "2026-11-08", history, releases_by_repository=releases)
         self.assertEqual([entry["repository"] for entry in selected], ["acme/recent", "acme/released"])
         self.assertEqual(decisions[0]["repeat_basis"], "stars_doubled")
@@ -57,7 +67,13 @@ class RepeatSelectionTests(unittest.TestCase):
 
     def test_missing_or_zero_previous_metric_never_qualifies_for_star_exception(self):
         candidates = [item("acme/missing", 1, 100), item("acme/zero", 2, 100)]
-        history = [{"report_date": "2026-11-07", "status": "published", "entries": [item("acme/missing", 1, None), item("acme/zero", 2, 0)]}]
+        history = [
+            {
+                "report_date": "2026-11-07",
+                "status": "published",
+                "entries": [item("acme/missing", 1, None), item("acme/zero", 2, 0)],
+            }
+        ]
         selected, decisions = filter_repeat_entries(candidates, "2026-11-08", history)
         self.assertEqual(selected, [])
         self.assertEqual([decision["reason"] for decision in decisions], ["recent_duplicate", "recent_duplicate"])

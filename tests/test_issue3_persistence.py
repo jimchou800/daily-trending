@@ -26,7 +26,12 @@ class PersistenceTests(unittest.TestCase):
     def test_snapshot_is_reused_and_corrupt_artifact_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ArtifactStore(Path(directory), "2026-11-09")
-            snapshot = {"contract_version": "1.0", "period_id": "2026-11-09", "snapshot_id": "abc", "stage": {"name": "collector", "status": "succeeded"}}
+            snapshot = {
+                "contract_version": "1.0",
+                "period_id": "2026-11-09",
+                "snapshot_id": "abc",
+                "stage": {"name": "collector", "status": "succeeded"},
+            }
             store.save("collector", snapshot)
             self.assertEqual(store.load_compatible("collector", "abc")["snapshot_id"], "abc")
             (Path(directory) / "2026-11-09" / "collector.json").write_text("{bad", encoding="utf-8")
@@ -49,20 +54,50 @@ class PersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source.json"
-            source.write_text(json.dumps({"complete": True, "entries": [
-                {"rank": 1, "repository": "acme/one", "repository_url": "https://github.com/acme/one", "stars_today": 4, "stars_total": 20}
-            ]}), encoding="utf-8")
+            source.write_text(
+                json.dumps(
+                    {
+                        "complete": True,
+                        "entries": [
+                            {
+                                "rank": 1,
+                                "repository": "acme/one",
+                                "repository_url": "https://github.com/acme/one",
+                                "stars_today": 4,
+                                "stars_total": 20,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             snapshot = collect_snapshot(source, "2026-11-09", "2026-11-09T00:30:00Z")
             calls = []
 
             def transport(payload, api_key):
                 calls.append(payload)
-                return {"choices": [{"message": {"content": json.dumps({
-                    "repository": "acme/one", "is_ai": True, "ai_relevance_evidence": "README says AI",
-                    "project_type": "tool", "introduction": "intro", "problem_solved": "problem",
-                    "audience": "developers", "characteristics": "simple", "reason_has_evidence": False,
-                    "sources": ["https://github.com/acme/one"]
-                })}}]}
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "repository": "acme/one",
+                                        "is_ai": True,
+                                        "ai_relevance_evidence": "README says AI",
+                                        "project_type": "tool",
+                                        "introduction": "intro",
+                                        "problem_solved": "problem",
+                                        "audience": "developers",
+                                        "characteristics": "simple",
+                                        "reason_has_evidence": False,
+                                        "sources": ["https://github.com/acme/one"],
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
 
             store = ArtifactStore(root / "artifacts", snapshot["period_id"])
             for _ in range(2):

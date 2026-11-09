@@ -63,13 +63,18 @@ def _recover_publication(root: Path) -> None:
         _write_json_atomic(index_path, manifest["index"])
         (root / "index.html.tmp").write_text(manifest["homepage"], encoding="utf-8")
         os.replace(root / "index.html.tmp", root / "index.html")
-    history_by_date = {item.get("report_date"): item for item in load_successful_history(root) if item.get("report_date")}
+    history_by_date = {
+        item.get("report_date"): item for item in load_successful_history(root) if item.get("report_date")
+    }
     history_by_date.setdefault(report["report_date"], report)
     merged_history = sorted(history_by_date.values(), key=lambda item: item.get("report_date", ""), reverse=True)
     _write_json_atomic(root / "history.json", merged_history)
     manifest_path.unlink(missing_ok=True)
 
-def publish_report(report: dict, html_content: str, site_root: Path, published_at: str, *, now: datetime | None = None) -> Path:
+
+def publish_report(
+    report: dict, html_content: str, site_root: Path, published_at: str, *, now: datetime | None = None
+) -> Path:
     """Publish a report before its Beijing deadline and commit the index last."""
     require_date(report.get("report_date"), "report_date")
     require_timestamp(published_at, "published_at")
@@ -101,7 +106,13 @@ def publish_report(report: dict, html_content: str, site_root: Path, published_a
     if not any(item.get("report_date") == report["report_date"] for item in history):
         history.append(report)
     history.sort(key=lambda item: item.get("report_date", ""), reverse=True)
-    manifest = {"report": report, "html": html_content, "homepage": render_homepage(html_content), "index": current, "history": history}
+    manifest = {
+        "report": report,
+        "html": html_content,
+        "homepage": render_homepage(html_content),
+        "index": current,
+        "history": history,
+    }
     _write_json_atomic(root / TRANSACTION_FILE, manifest)
     _recover_publication(root)
     return target
@@ -131,18 +142,40 @@ def correct_report(
     require(target.exists() and page.exists(), "published report does not exist")
     existing = json.loads(target.read_text(encoding="utf-8"))
     require(existing.get("status") == "published", "only published reports can be corrected")
-    require_github_url(existing.get("source", existing.get("source_url", "https://github.com/trending?since=daily")), "source")
+    require_github_url(
+        existing.get("source", existing.get("source_url", "https://github.com/trending?since=daily")), "source"
+    )
     for field in ("report_date", "source", "source_url", "history", "snapshot_id"):
         if field in existing or field in corrected_report:
             require(corrected_report.get(field) == existing.get(field), f"immutable field: {field}")
-    require(corrected_report.get("published_at", existing.get("published_at")) == existing.get("published_at"), "immutable field: published_at")
+    require(
+        corrected_report.get("published_at", existing.get("published_at")) == existing.get("published_at"),
+        "immutable field: published_at",
+    )
     require(corrected_report.get("status", existing.get("status")) == "published", "immutable field: status")
     entries = existing.get("entries")
     replacement_entries = corrected_report.get("entries", entries)
-    require(isinstance(entries, list) and isinstance(replacement_entries, list) and len(entries) == len(replacement_entries), "immutable selection")
+    require(
+        isinstance(entries, list)
+        and isinstance(replacement_entries, list)
+        and len(entries) == len(replacement_entries),
+        "immutable selection",
+    )
     for before, after in zip(entries, replacement_entries):
         require(isinstance(before, dict) and isinstance(after, dict), "invalid report entry")
-        required = ("repository", "repository_url", "rank", "ai_relevance_evidence", "project_type", "introduction", "problem_solved", "audience", "characteristics", "heat", "sources")
+        required = (
+            "repository",
+            "repository_url",
+            "rank",
+            "ai_relevance_evidence",
+            "project_type",
+            "introduction",
+            "problem_solved",
+            "audience",
+            "characteristics",
+            "heat",
+            "sources",
+        )
         require(all(field in after for field in required), "analysis entry is incomplete")
         for field in ("repository", "repository_url", "rank", "heat"):
             require(after.get(field) == before.get(field), f"immutable selection field: {field}")
@@ -157,7 +190,18 @@ def correct_report(
         require(heat.get("stars_total") is None or isinstance(heat.get("stars_total"), int), "invalid stars_total")
     updated = dict(existing)
     for key, value in corrected_report.items():
-        if key not in {"report_date", "source", "source_url", "history", "snapshot_id", "entries", "published_at", "status", "correction", "corrections"}:
+        if key not in {
+            "report_date",
+            "source",
+            "source_url",
+            "history",
+            "snapshot_id",
+            "entries",
+            "published_at",
+            "status",
+            "correction",
+            "corrections",
+        }:
             updated[key] = value
     if "entries" in corrected_report:
         updated["entries"] = replacement_entries
@@ -175,7 +219,7 @@ def correct_report(
     html_content = render_html(updated)
     correction_banner = (
         '<aside class="correction"><strong>内容更正</strong> · '
-        f'{html_escape(corrected_at)} · {html_escape(note.strip())}</aside>'
+        f"{html_escape(corrected_at)} · {html_escape(note.strip())}</aside>"
     )
     require(re.search(r"</main\s*>", html_content, flags=re.IGNORECASE) is not None, "corrected page must contain main")
     html_content = re.sub(r"</main\s*>", correction_banner + "</main>", html_content, count=1, flags=re.IGNORECASE)

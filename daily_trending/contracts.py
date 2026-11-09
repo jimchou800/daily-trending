@@ -55,7 +55,17 @@ def validate_common_artifact(artifact: dict, expected_stage: str) -> None:
 def validate_public_report(report: dict) -> None:
     """Validate the canonical JSON contract before a report becomes public."""
     require(isinstance(report, dict), "report must be an object")
-    for field in ("contract_version", "report_date", "timezone", "collected_at", "source", "scope", "status", "entry_count", "entries"):
+    for field in (
+        "contract_version",
+        "report_date",
+        "timezone",
+        "collected_at",
+        "source",
+        "scope",
+        "status",
+        "entry_count",
+        "entries",
+    ):
         require(field in report, f"missing report field: {field}")
     require(report["contract_version"] == CONTRACT_VERSION, "unsupported report contract version")
     require_date(report["report_date"], "report_date")
@@ -68,7 +78,19 @@ def validate_public_report(report: dict) -> None:
     require(report["entry_count"] == len(entries), "invalid report entry count")
     for entry in entries:
         require(isinstance(entry, dict), "invalid report entry")
-        for field in ("repository", "repository_url", "rank", "ai_relevance_evidence", "project_type", "introduction", "problem_solved", "audience", "characteristics", "heat", "sources"):
+        for field in (
+            "repository",
+            "repository_url",
+            "rank",
+            "ai_relevance_evidence",
+            "project_type",
+            "introduction",
+            "problem_solved",
+            "audience",
+            "characteristics",
+            "heat",
+            "sources",
+        ):
             require(field in entry, f"missing report entry field: {field}")
         require_github_url(entry["repository_url"], "repository")
         require(isinstance(entry["sources"], list) and entry["sources"], "analysis sources are missing")

@@ -134,7 +134,16 @@ def build_analysis_prompt(entries: list[dict]) -> str:
         metadata = github_sources.get("metadata", {}) if isinstance(github_sources, dict) else {}
         safe_metadata = {
             key: metadata.get(key)
-            for key in ("name", "full_name", "description", "topics", "language", "license", "stargazers_count", "forks_count")
+            for key in (
+                "name",
+                "full_name",
+                "description",
+                "topics",
+                "language",
+                "license",
+                "stargazers_count",
+                "forks_count",
+            )
             if key in metadata
         }
         safe_releases = []
@@ -148,7 +157,11 @@ def build_analysis_prompt(entries: list[dict]) -> str:
                 "description": entry.get("description", ""),
                 "language": entry.get("language"),
                 "rank": entry.get("rank"),
-                "github_sources": {"metadata": safe_metadata, "readme": github_sources.get("readme", "") if isinstance(github_sources, dict) else "", "releases": safe_releases},
+                "github_sources": {
+                    "metadata": safe_metadata,
+                    "readme": github_sources.get("readme", "") if isinstance(github_sources, dict) else "",
+                    "releases": safe_releases,
+                },
             }
         )
     return (
@@ -156,6 +169,5 @@ def build_analysis_prompt(entries: list[dict]) -> str:
         "不要访问或引用 GitHub 之外的网页，不要编造热度数值。"
         "输出 JSON 数组 analyses，每项包含 repository、is_ai、ai_relevance_evidence、"
         "project_type、introduction、problem_solved、audience、characteristics、"
-        "reason_has_evidence、reason、sources；sources 只能是 GitHub URL。\n"
-        + json.dumps(source, ensure_ascii=False)
+        "reason_has_evidence、reason、sources；sources 只能是 GitHub URL。\n" + json.dumps(source, ensure_ascii=False)
     )

@@ -133,8 +133,18 @@ def homepage_status(site_root: Path, now: datetime | None = None) -> dict[str, o
     if latest and datetime.fromisoformat(latest).date() == today:
         return {"status": "published", "latest_report_date": latest, "published_at": published_at, "message": ""}
     if current.time() < time(9):
-        return {"status": "published" if latest else "unpublished", "latest_report_date": latest, "published_at": published_at, "message": "" if latest else "尚未发布"}
-    return {"status": "failed", "latest_report_date": latest, "published_at": published_at, "message": "今日日报生成失败"}
+        return {
+            "status": "published" if latest else "unpublished",
+            "latest_report_date": latest,
+            "published_at": published_at,
+            "message": "" if latest else "尚未发布",
+        }
+    return {
+        "status": "failed",
+        "latest_report_date": latest,
+        "published_at": published_at,
+        "message": "今日日报生成失败",
+    }
 
 
 def render_homepage(report_html: str) -> str:

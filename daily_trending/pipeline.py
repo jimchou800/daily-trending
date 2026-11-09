@@ -25,7 +25,15 @@ class PipelineResult:
     analyzer_path: Path
 
 
-def run_sample_pipeline(snapshot_path: Path, response_path: Path, output_dir: Path, issue_date: str, collected_at: str, *, history: list[dict] | None = None) -> PipelineResult:
+def run_sample_pipeline(
+    snapshot_path: Path,
+    response_path: Path,
+    output_dir: Path,
+    issue_date: str,
+    collected_at: str,
+    *,
+    history: list[dict] | None = None,
+) -> PipelineResult:
     """Run collector, analyzer, and organizer against saved development samples."""
     output_dir.mkdir(parents=True, exist_ok=True)
     snapshot = collect_snapshot(snapshot_path, issue_date, collected_at)
@@ -35,7 +43,9 @@ def run_sample_pipeline(snapshot_path: Path, response_path: Path, output_dir: Pa
     analyzer_path = output_dir / "analyzer.json"
     analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     analysis["analyses"], decisions = filter_repeat_entries(analysis["analyses"], issue_date, history or [])
-    (output_dir / "selection.json").write_text(json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (output_dir / "selection.json").write_text(
+        json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     report = organize_report(analysis)
     report_path, html_path = write_report(report, output_dir)
     return PipelineResult(report_path, html_path, collector_path, analyzer_path)
@@ -78,18 +88,26 @@ def run_live_pipeline(
             client._reserve_call = reserve_with_state
         analysis = store.load_compatible("analyzer", snapshot["snapshot_id"], client.config.model) if store else None
         if analysis is None:
-            analysis = analyze_live_snapshot(snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store)
+            analysis = analyze_live_snapshot(
+                snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store
+            )
             if store and analysis["stage"]["status"] == "succeeded":
                 analysis["model"] = client.config.model
                 store.save("analyzer", analysis)
         analyzer_path = output_dir / "analyzer.json"
         analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        successful_history = history if history is not None else load_published_history(history_root) if history_root else []
-        release_evidence = releases_by_repository if releases_by_repository is not None else analysis.get("release_evidence", {})
+        successful_history = (
+            history if history is not None else load_published_history(history_root) if history_root else []
+        )
+        release_evidence = (
+            releases_by_repository if releases_by_repository is not None else analysis.get("release_evidence", {})
+        )
         analysis["analyses"], decisions = filter_repeat_entries(
             analysis["analyses"], issue_date, successful_history, releases_by_repository=release_evidence
         )
-        (output_dir / "selection.json").write_text(json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (output_dir / "selection.json").write_text(
+            json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         report = organize_report(analysis)
         report_path, html_path = write_report(report, output_dir)
         if store:

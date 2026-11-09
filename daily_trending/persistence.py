@@ -26,7 +26,15 @@ class ArtifactStore:
 
     def _read_state(self) -> dict[str, Any]:
         if not self.state_path.exists():
-            return {"period_id": self.directory.name, "attempts": 0, "run_count": 0, "status": "pending", "failures": [], "estimated_spend_cny": 0.0, "artifact_schema": ARTIFACT_SCHEMA_VERSION}
+            return {
+                "period_id": self.directory.name,
+                "attempts": 0,
+                "run_count": 0,
+                "status": "pending",
+                "failures": [],
+                "estimated_spend_cny": 0.0,
+                "artifact_schema": ARTIFACT_SCHEMA_VERSION,
+            }
         try:
             state = json.loads(self.state_path.read_text(encoding="utf-8"))
             if state.get("period_id") != self.directory.name:
@@ -56,7 +64,9 @@ class ArtifactStore:
         os.replace(temporary, path)
         return path
 
-    def load_compatible(self, stage: str, snapshot_id: str | None = None, model: str | None = None) -> dict[str, Any] | None:
+    def load_compatible(
+        self, stage: str, snapshot_id: str | None = None, model: str | None = None
+    ) -> dict[str, Any] | None:
         """Load a valid cached stage, rejecting corruption, wrong stage, period, or snapshot."""
         path = self.directory / f"{stage}.json"
         try:
@@ -112,7 +122,13 @@ class ArtifactStore:
         try:
             cache = json.loads(path.read_text(encoding="utf-8"))
             item = cache.get(repository)
-            if item and item.get("contract_version") == CONTRACT_VERSION and item.get("schema") == ANALYSIS_SCHEMA_VERSION and item.get("snapshot_id") == snapshot_id and item.get("model") == model:
+            if (
+                item
+                and item.get("contract_version") == CONTRACT_VERSION
+                and item.get("schema") == ANALYSIS_SCHEMA_VERSION
+                and item.get("snapshot_id") == snapshot_id
+                and item.get("model") == model
+            ):
                 analysis = item.get("analysis")
                 if isinstance(analysis, dict) and analysis.get("repository") == repository:
                     return analysis
@@ -127,7 +143,13 @@ class ArtifactStore:
             cache = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         except (OSError, ValueError, json.JSONDecodeError):
             cache = {}
-        cache[repository] = {"contract_version": CONTRACT_VERSION, "schema": ANALYSIS_SCHEMA_VERSION, "snapshot_id": snapshot_id, "model": model, "analysis": analysis}
+        cache[repository] = {
+            "contract_version": CONTRACT_VERSION,
+            "schema": ANALYSIS_SCHEMA_VERSION,
+            "snapshot_id": snapshot_id,
+            "model": model,
+            "analysis": analysis,
+        }
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(cache, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, path)

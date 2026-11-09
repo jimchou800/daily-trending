@@ -36,7 +36,17 @@ class _TrendingParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         if tag == "article" and "Box-row" in (attributes.get("class") or "").split():
-            self._card = {"href": None, "repository": None, "description": "", "language": None, "stars_total": None, "stars_today": None, "text": [], "total_text": "", "today_text": ""}
+            self._card = {
+                "href": None,
+                "repository": None,
+                "description": "",
+                "language": None,
+                "stars_total": None,
+                "stars_today": None,
+                "text": [],
+                "total_text": "",
+                "today_text": "",
+            }
             self._depth = 1
             return
         if self._card is None:
@@ -68,7 +78,11 @@ class _TrendingParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if self._card is None:
             return
-        if self._capture and ((tag == "p" and self._capture == "description") or (tag == "span" and self._capture in ("language", "today")) or (tag == "a" and self._capture in ("link", "total"))):
+        if self._capture and (
+            (tag == "p" and self._capture == "description")
+            or (tag == "span" and self._capture in ("language", "today"))
+            or (tag == "a" and self._capture in ("link", "total"))
+        ):
             value = " ".join(self._buffer).strip()
             if self._capture == "description":
                 self._card["description"] = value
@@ -84,7 +98,6 @@ class _TrendingParser(HTMLParser):
             self._capture = None
             self._buffer = []
         if tag == "article":
-            text = " ".join(self._card["text"])
             if self._card["href"]:
                 total_match = re.search(r"([\d,]+)", self._card["total_text"])
                 today_match = re.search(r"([\d,]+)\s+stars?\s+today", self._card["today_text"], re.IGNORECASE)
@@ -130,10 +143,12 @@ def collect_trending(issue_date: str, collected_at: str, fetch: Callable[[str], 
     require_date(issue_date, "period")
     require_timestamp(collected_at, "collected_at")
     if fetch is None:
+
         def fetch(url: str) -> str:
             request = Request(url, headers={"User-Agent": "daily-trending/1.0"})
             with urlopen(request, timeout=20) as response:
                 return response.read().decode("utf-8")
+
     entries = parse_trending_html(fetch(TRENDING_URL))
     return _artifact_from_entries(entries, issue_date, collected_at)
 
@@ -154,7 +169,12 @@ def _artifact_from_entries(entries: list[dict], issue_date: str, collected_at: s
         "period_id": issue_date,
         "snapshot_id": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16],
         "stage": {"name": "collector", "status": "succeeded", "errors": []},
-        "snapshot": {"source_url": TRENDING_URL, "scope": TRENDING_SCOPE, "collected_at": collected_at, "entries": normalized},
+        "snapshot": {
+            "source_url": TRENDING_URL,
+            "scope": TRENDING_SCOPE,
+            "collected_at": collected_at,
+            "entries": normalized,
+        },
     }
 
 

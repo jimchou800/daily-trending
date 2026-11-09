@@ -21,7 +21,11 @@ def load_published_history(site_root: Path) -> list[dict]:
             report = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if isinstance(report, dict) and report.get("status") == "published" and report.get("report_date") == path.parent.name:
+        if (
+            isinstance(report, dict)
+            and report.get("status") == "published"
+            and report.get("report_date") == path.parent.name
+        ):
             reports.append(report)
     return reports
 
@@ -33,7 +37,13 @@ def _period_start(value: str) -> datetime:
 
 def _successful_history(history: list[dict]) -> list[dict]:
     return sorted(
-        (record for record in history if isinstance(record, dict) and record.get("status") == "published" and isinstance(record.get("report_date"), str)),
+        (
+            record
+            for record in history
+            if isinstance(record, dict)
+            and record.get("status") == "published"
+            and isinstance(record.get("report_date"), str)
+        ),
         key=lambda record: record["report_date"],
         reverse=True,
     )
@@ -92,7 +102,11 @@ def filter_repeat_entries(
         for entry in record.get("entries", []):
             repository = _entry_repository(entry)
             if repository and repository not in latest_by_repo:
-                latest_by_repo[repository] = {"record": record, "entry": entry, "period": _period_start(record["report_date"])}
+                latest_by_repo[repository] = {
+                    "record": record,
+                    "entry": entry,
+                    "period": _period_start(record["report_date"]),
+                }
 
     selected: list[dict] = []
     decisions: list[dict] = []
@@ -114,7 +128,13 @@ def filter_repeat_entries(
             else:
                 old_stars = _heat(previous["entry"]).get("stars_today")
                 new_stars = _heat(candidate).get("stars_today")
-                doubled = isinstance(old_stars, int) and old_stars > 0 and isinstance(new_stars, int) and new_stars >= old_stars * 2 and new_stars > old_stars
+                doubled = (
+                    isinstance(old_stars, int)
+                    and old_stars > 0
+                    and isinstance(new_stars, int)
+                    and new_stars >= old_stars * 2
+                    and new_stars > old_stars
+                )
                 released = _formal_release_after(releases_by_repository.get(repository, []), previous["period"])
                 if released:
                     decision.update(eligible=True, reason="recent_exception", repeat_basis="new_formal_release")
@@ -126,7 +146,9 @@ def filter_repeat_entries(
             enriched = deepcopy(candidate)
             if previous is not None and decision.get("repeat_basis"):
                 enriched["repeat_basis"] = decision["repeat_basis"]
-                enriched["repeat_change"] = f"相较 {previous['record']['report_date']}：当日新增 Star {old_stars} → {new_stars}"
+                enriched["repeat_change"] = (
+                    f"相较 {previous['record']['report_date']}：当日新增 Star {old_stars} → {new_stars}"
+                )
                 enriched["previous_report_url"] = f"archive/{previous['record']['report_date']}/"
                 decision["previous_report_url"] = enriched["previous_report_url"]
             if len(selected) < limit:

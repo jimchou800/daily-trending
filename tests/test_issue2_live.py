@@ -20,6 +20,16 @@ TRENDING_HTML = (Path(__file__).parent / "fixtures" / "trending_page.html").read
 
 
 class LiveCollectorTests(unittest.TestCase):
+    def test_github_source_loader_rejects_invalid_repository_and_handles_missing_sources(self):
+        with self.assertRaisesRegex(ValueError, "invalid repository"):
+            load_github_sources({"repository": "bad"}, lambda _: {})
+
+        result = load_github_sources(
+            {"repository": "acme/empty"},
+            lambda url: [] if "/releases" in url else None,
+        )
+        self.assertEqual(result, {"metadata": None, "readme": "", "releases": []})
+
     def test_parser_preserves_all_source_order_and_missing_metrics(self):
         entries = parse_trending_html(TRENDING_HTML)
         self.assertEqual([entry["rank"] for entry in entries], [1, 2])
@@ -40,10 +50,17 @@ class LiveCollectorTests(unittest.TestCase):
             urls.append(url)
             if url.endswith("/readme"):
                 import base64
+
                 return {"content": base64.b64encode(b"# README").decode("ascii")}
             if "/releases" in url:
                 return [
-                    {"tag_name": "v1", "published_at": "2026-01-01", "html_url": "https://github.com/acme/first/releases/v1", "draft": False, "prerelease": False},
+                    {
+                        "tag_name": "v1",
+                        "published_at": "2026-01-01",
+                        "html_url": "https://github.com/acme/first/releases/v1",
+                        "draft": False,
+                        "prerelease": False,
+                    },
                     {"tag_name": "v2", "draft": False, "prerelease": True},
                 ]
             return {"full_name": "acme/first", "description": "AI"}
@@ -55,8 +72,65 @@ class LiveCollectorTests(unittest.TestCase):
 
 
 class DashScopeTests(unittest.TestCase):
+    def test_client_rejects_invalid_input_and_restored_usage(self):
+        client = DashScopeClient(api_key="secret", transport=lambda *_: {})
+        with self.assertRaisesRegex(ModelCallError, "empty"):
+            client.complete("  ")
+        with self.assertRaisesRegex(ModelCallError, "input exceeds"):
+            DashScopeClient(
+                api_key="secret",
+                transport=lambda *_: {},
+                config=DashScopeConfig(max_input_chars=2),
+            ).complete("long")
+        with self.assertRaisesRegex(ValueError, "persisted"):
+            client.restore_usage(-1, 0)
+        client.restore_usage(0, 0)
+        self.assertEqual(client.calls_used, 0)
+
+    def test_client_parses_text_blocks_and_rejects_non_object_or_long_output(self):
+        def block_transport(payload, api_key):
+            return {"choices": [{"message": {"content": [{"text": '```json\n{"ok":true}\n```'}]}}]}
+
+        client = DashScopeClient(api_key="secret", transport=block_transport)
+        self.assertEqual(json.loads(client.complete("source")), {"ok": True})
+
+        array_client = DashScopeClient(
+            api_key="secret",
+            transport=lambda *_: {"choices": [{"message": {"content": "[]"}}]},
+            config=DashScopeConfig(max_retries=0),
+        )
+        with self.assertRaisesRegex(ModelCallError, "object"):
+            array_client.complete("source")
+
+        long_client = DashScopeClient(
+            api_key="secret",
+            transport=lambda *_: {"choices": [{"message": {"content": '{"result":"long"}'}}]},
+            config=DashScopeConfig(max_retries=2, max_output_chars=4),
+        )
+        with self.assertRaisesRegex(ModelCallError, "output exceeds"):
+            long_client.complete("source")
+        self.assertEqual(long_client.calls_used, 1)
+
+    def test_client_enforces_per_run_call_limit(self):
+        client = DashScopeClient(
+            api_key="secret",
+            transport=lambda *_: {"choices": [{"message": {"content": '{"ok":true}'}}]},
+            config=DashScopeConfig(max_calls=1, estimated_call_cost_cny=0),
+        )
+        client.complete("first")
+        with self.assertRaises(BudgetExceeded):
+            client.complete("second")
+
     def test_analysis_prompt_contains_only_github_source_material(self):
-        prompt = build_analysis_prompt([{"repository": "acme/first", "repository_url": "https://github.com/acme/first", "github_sources": {"readme": "# AI", "metadata": {"description": "AI"}}}])
+        prompt = build_analysis_prompt(
+            [
+                {
+                    "repository": "acme/first",
+                    "repository_url": "https://github.com/acme/first",
+                    "github_sources": {"readme": "# AI", "metadata": {"description": "AI"}},
+                }
+            ]
+        )
         self.assertIn("# AI", prompt)
         self.assertNotIn("http://external.example", prompt)
 
@@ -129,16 +203,18 @@ class DashScopeTests(unittest.TestCase):
             repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
             response = {"repository": repository, "is_ai": repository == "acme/first"}
             if response["is_ai"]:
-                response.update({
-                    "ai_relevance_evidence": "README describes an AI tool.",
-                    "project_type": "工具",
-                    "introduction": "用于处理 AI 工作流。",
-                    "problem_solved": "减少重复操作。",
-                    "audience": "开发者",
-                    "characteristics": "提供可复用流程。",
-                    "reason_has_evidence": False,
-                    "sources": ["https://github.com/acme/first"],
-                })
+                response.update(
+                    {
+                        "ai_relevance_evidence": "README describes an AI tool.",
+                        "project_type": "工具",
+                        "introduction": "用于处理 AI 工作流。",
+                        "problem_solved": "减少重复操作。",
+                        "audience": "开发者",
+                        "characteristics": "提供可复用流程。",
+                        "reason_has_evidence": False,
+                        "sources": ["https://github.com/acme/first"],
+                    }
+                )
             return {"choices": [{"message": {"content": json.dumps(response)}}]}
 
         client = DashScopeClient(api_key="secret", transport=transport, config=DashScopeConfig(max_retries=0))
@@ -163,10 +239,30 @@ def collect_snapshot_from_entries():
 
     with TemporaryDirectory() as directory:
         path = Path(directory) / "snapshot.json"
-        path.write_text(json.dumps({"complete": True, "entries": [
-            {"rank": 1, "repository": "acme/first", "repository_url": "https://github.com/acme/first", "stars_total": 1, "stars_today": 1},
-            {"rank": 2, "repository": "acme/second", "repository_url": "https://github.com/acme/second", "stars_total": 2, "stars_today": 2},
-        ]}), encoding="utf-8")
+        path.write_text(
+            json.dumps(
+                {
+                    "complete": True,
+                    "entries": [
+                        {
+                            "rank": 1,
+                            "repository": "acme/first",
+                            "repository_url": "https://github.com/acme/first",
+                            "stars_total": 1,
+                            "stars_today": 1,
+                        },
+                        {
+                            "rank": 2,
+                            "repository": "acme/second",
+                            "repository_url": "https://github.com/acme/second",
+                            "stars_total": 2,
+                            "stars_today": 2,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         return collect_snapshot(path, "2026-11-09", "2026-11-09T00:30:00Z")
 
 

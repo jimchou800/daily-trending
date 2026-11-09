@@ -24,7 +24,11 @@ def load_github_sources(entry: dict, fetch: Callable[[str], Any] | None = None) 
     formal_releases = []
     if isinstance(releases, list):
         formal_releases = [
-            {"tag_name": item.get("tag_name"), "published_at": item.get("published_at"), "html_url": item.get("html_url")}
+            {
+                "tag_name": item.get("tag_name"),
+                "published_at": item.get("published_at"),
+                "html_url": item.get("html_url"),
+            }
             for item in releases
             if isinstance(item, dict) and item.get("draft") is False and item.get("prerelease") is False
         ]

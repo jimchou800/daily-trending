@@ -1,3 +1,4 @@
+from tests.model_stub import classification_response
 import json
 import tempfile
 import unittest
@@ -76,6 +77,8 @@ class PersistenceTests(unittest.TestCase):
 
             def transport(payload, api_key):
                 calls.append(payload)
+                if "classifications" in payload["messages"][0]["content"].split("\n", 1)[0]:
+                    return classification_response(payload, is_ai=True, evidence="README")
                 return {
                     "choices": [
                         {
@@ -84,7 +87,7 @@ class PersistenceTests(unittest.TestCase):
                                     {
                                         "repository": "acme/one",
                                         "is_ai": True,
-                                        "ai_relevance_evidence": "README says AI",
+                                        "ai_relevance_evidence": "README",
                                         "project_type": "tool",
                                         "introduction": "intro",
                                         "problem_solved": "problem",
@@ -104,7 +107,7 @@ class PersistenceTests(unittest.TestCase):
                 client = DashScopeClient(api_key="test", transport=transport, config=DashScopeConfig(max_retries=0))
                 result = analyze_live_snapshot(snapshot, client, lambda entry: {"readme": "README"}, cache_store=store)
                 self.assertEqual(result["analyses"][0]["repository"], "acme/one")
-            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":

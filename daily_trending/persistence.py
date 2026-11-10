@@ -12,7 +12,7 @@ from .contracts import CONTRACT_VERSION, require_date
 
 MAX_RETRIES = 2
 ARTIFACT_SCHEMA_VERSION = "1"
-ANALYSIS_SCHEMA_VERSION = "1"
+ANALYSIS_SCHEMA_VERSION = "2"
 
 
 class ArtifactStore:
@@ -82,6 +82,8 @@ class ArtifactStore:
                 return None
             if model is not None and artifact.get("model") != model:
                 return None
+            if stage == "analyzer" and artifact.get("analysis_schema") != ANALYSIS_SCHEMA_VERSION:
+                return None
             return artifact
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
             return None
@@ -129,12 +131,18 @@ class ArtifactStore:
         self.state["calls_used"] = calls_used
         self.state["estimated_spend_cny"] = estimated_spend_cny if period_spend_cny is None else period_spend_cny
         monthly_path = self.root / f"monthly-{self.directory.name[:7]}.json"
+        try:
+            prior = json.loads(monthly_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            prior = {}
         temporary = monthly_path.with_suffix(".tmp")
         temporary.write_text(
             json.dumps(
                 {
                     "calls_used": calls_used if monthly_calls_used is None else monthly_calls_used,
                     "estimated_spend_cny": estimated_spend_cny,
+                    "accounting_blocked": prior.get("accounting_blocked", False),
+                    "usage_records": prior.get("usage_records", []),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -162,13 +170,56 @@ class ArtifactStore:
                 or spend < 0
             ):
                 raise ValueError("invalid monthly usage")
-            return {"calls_used": calls_used, "estimated_spend_cny": spend}
+            if type(data.get("accounting_blocked", False)) is not bool:
+                raise ValueError("invalid accounting block")
+            records = data.get("usage_records", [])
+            if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+                raise ValueError("invalid usage records")
+            allowed_fields = {
+                "reserved_cost_cny",
+                "usage_status",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "actual_cost_cny",
+            }
+            for record in records:
+                if set(record) - allowed_fields or record.get("usage_status") not in ("unavailable", "reported"):
+                    raise ValueError("invalid usage record fields")
+                for key, value in record.items():
+                    if key != "usage_status" and (
+                        type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                    ):
+                        raise ValueError("invalid usage record value")
+            result = {"calls_used": calls_used, "estimated_spend_cny": spend}
+            if data.get("accounting_blocked"):
+                result["accounting_blocked"] = True
+            if data.get("usage_records"):
+                result["usage_records"] = data["usage_records"]
+            return result
         except FileNotFoundError:
             if any(self.root.glob(f"{self.directory.name[:7]}-*/run-state.json")):
                 raise ValueError("monthly usage ledger is missing for existing run state")
             return {"calls_used": 0, "estimated_spend_cny": 0.0}
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("monthly usage ledger is corrupt") from exc
+
+    def update_accounting(self, blocked: bool, records: list[dict]) -> None:
+        """Persist provider accounting evidence and a latched monthly spending stop.
+
+        The monthly ledger is authoritative across report dates; an interrupted
+        period-state write must not release an accounting block.
+        """
+        usage = self.monthly_usage()
+        usage["accounting_blocked"] = bool(usage.get("accounting_blocked")) or blocked
+        usage["usage_records"] = records
+        path = self.root / f"monthly-{self.directory.name[:7]}.json"
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(usage, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+        self.state["accounting_blocked"] = usage["accounting_blocked"]
+        self.state["usage_records"] = records
+        self._write_state()
 
     def load_analysis(self, repository: str, snapshot_id: str, model: str) -> dict[str, Any] | None:
         """Load a candidate analysis only when all compatibility identities match."""

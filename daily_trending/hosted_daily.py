@@ -54,7 +54,7 @@ def run_hosted_daily(
     initial = authority.state(period)
     if initial.get("publication") is not None:
         return initial["publication"]
-    identity = run_id or uuid4().hex
+    identity = f"{run_id or 'runner'}:{uuid4().hex}"
     last_error: Exception | None = None
     try:
         for attempt in range(MAX_ATTEMPTS):

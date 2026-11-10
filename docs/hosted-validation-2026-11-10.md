@@ -35,5 +35,40 @@ These observations do not establish successful on-time live publication, hosted
 correction/rollback, actual shared quotas, free runner capacity, or exact durable
 commit timing. The platform crash-window limitation in
 [hosted publication](hosted-publication.md) remains unresolved acceptance work.
-There is not yet a public issue to read; the initiator's seven-issue trial has
-not started. Do not mark those acceptance conditions complete from this smoke.
+The initiator's seven-issue trial is not complete. Do not mark those acceptance
+conditions complete from this smoke.
+
+## Explicit one-day maintenance publication
+
+The maintainer subsequently requested one late publication for 2026-11-10 to
+inspect the result. This is an explicit exception for that date, not a change
+to the normal 09:00 deadline or no-backfill policy.
+
+The saved complete Daily snapshot was collected at
+`2026-11-10T02:05:14.043696+00:00` (10:05 Beijing). Five entries were published
+at `2026-11-10T03:26:51.068Z` (11:26 Beijing), retaining original ranks
+1, 5, 6, 7 and 8. The public report is at
+<https://daily-trending-authority.zhoumin808.workers.dev/archive/2026-11-10/>.
+It explicitly states that maintenance publication missed 09:00. This is not
+evidence of on-time publication acceptance. No additional model calls were made
+to publish the already generated report.
+
+The maintenance route required normal automation credentials, a separate
+temporary token, the server's current date, the fixed date 2026-11-10 and the
+SHA-256 of the saved report. Snapshot, selection, metrics and history validation
+remained active. The temporary token was deleted and date/hash bindings removed
+after publication; an authenticated request then returned HTTP403. The disabled
+route remains in code, without active authorization.
+
+Live headless Edge verification at 390x844 and 1440x1000 confirmed HTTP200 for
+the homepage and dated report, all five entries in original order, the real
+timestamp and maintenance note, a single archive link, no horizontal overflow
+and no page script errors. Worker checks passed with 46 SQLite tests and 18
+browser scenarios; a further targeted midnight rollback assertion passed.
+Line coverage was 97.73%, branch coverage 93.13%; emitted browser script coverage
+was 100% for both. Independent maintenance-route review found no blockers.
+
+After every issue meets its acceptance conditions, the maintainer authorized
+merging the PR, closing the corresponding GitHub issues, and cleaning inactive
+merged branches/worktrees and verified intermediate untracked files. Preserve
+uncommitted user work, runtime credentials and required deployment state.

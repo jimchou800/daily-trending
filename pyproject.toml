@@ -3,7 +3,7 @@ line-length = 120
 target-version = ["py312"]
 
 [tool.coverage.run]
-source = ["daily_trending"]
+source = ["daily_trending", "scripts"]
 branch = true
 
 [tool.coverage.report]

@@ -72,10 +72,15 @@ class DashScopeClient:
             raise ModelCallError("model input is empty")
         if len(source_text) > self.config.max_input_chars:
             raise ModelCallError("model input exceeds configured limit")
+        # Keep the configured provider-qualified identity for cache keys; the
+        # OpenAI-compatible endpoint expects only DashScope's remote model ID.
+        model = self.config.model.removeprefix("dashscope/")
+        if not model or "/" in model or any(char.isspace() for char in model):
+            raise ModelCallError("invalid model identifier: use a remote ID or dashscope/<remote ID>")
         payload = {
-            "model": self.config.model,
+            "model": model,
             "messages": [{"role": "user", "content": source_text}],
-            "max_tokens": self.config.max_output_tokens,
+            "max_completion_tokens": self.config.max_output_tokens,
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }

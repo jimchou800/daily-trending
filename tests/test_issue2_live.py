@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -92,6 +93,48 @@ class LiveCollectorTests(unittest.TestCase):
 
 
 class DashScopeTests(unittest.TestCase):
+    def test_http_request_preserves_custom_remote_model_id(self):
+        for model in ("qwen3.8-max", "custom-model-v2", "dashscope/custom-model-v2"):
+            with self.subTest(model=model):
+                client = DashScopeClient(api_key="test-key", config=DashScopeConfig(model=model))
+                response = json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+                with patch("daily_trending.dashscope.urlopen", return_value=BytesIO(response)) as http:
+                    self.assertEqual(client.complete("source text"), "{}")
+                expected = "qwen3.8-max" if model == "qwen3.8-max" else "custom-model-v2"
+                self.assertEqual(json.loads(http.call_args.args[0].data)["model"], expected)
+                self.assertEqual(client.config.model, model)
+
+    def test_invalid_model_identity_is_rejected_before_transport_or_spend(self):
+        for model in (
+            "",
+            "dashscope/",
+            "other/qwen3.8-max",
+            "dashscope/dashscope/qwen3.8-max",
+            " qwen3.8-max",
+            "qwen 3",
+        ):
+            with self.subTest(model=model):
+                client = DashScopeClient(api_key="test-key", config=DashScopeConfig(model=model))
+                with patch("daily_trending.dashscope.urlopen") as http:
+                    with self.assertRaisesRegex(ModelCallError, "model identifier"):
+                        client.complete("source text")
+                http.assert_not_called()
+                self.assertEqual(client.calls_used, 0)
+                self.assertEqual(client.estimated_spend_cny, 0)
+
+    def test_http_request_uses_remote_model_id_without_changing_config_identity(self):
+        config = DashScopeConfig()
+        client = DashScopeClient(api_key="test-key", config=config)
+        response = json.dumps({"choices": [{"message": {"content": '{"ok":true}'}}]}).encode()
+        with patch("daily_trending.dashscope.urlopen", return_value=BytesIO(response)) as http:
+            self.assertEqual(json.loads(client.complete("source text")), {"ok": True})
+        request = http.call_args.args[0]
+        self.assertEqual(json.loads(request.data)["model"], "qwen3.8-max")
+        self.assertEqual(json.loads(request.data)["max_completion_tokens"], 1800)
+        self.assertNotIn("max_tokens", json.loads(request.data))
+        self.assertEqual(config.model, "dashscope/qwen3.8-max")
+        self.assertEqual(client.config.model, "dashscope/qwen3.8-max")
+
     def test_client_rejects_invalid_input_and_restored_usage(self):
         client = DashScopeClient(api_key="secret", transport=lambda *_: {})
         with self.assertRaisesRegex(ModelCallError, "empty"):
@@ -171,7 +214,7 @@ class DashScopeTests(unittest.TestCase):
         result = client.complete("source text")
         self.assertEqual(json.loads(result), {"is_ai": False})
         self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0][0]["model"], "dashscope/qwen3.8-max")
+        self.assertEqual(calls[0][0]["model"], "qwen3.8-max")
 
     def test_client_stops_before_call_when_budget_is_exhausted(self):
         calls = []

@@ -83,3 +83,8 @@ applicable region/tariff/token limits and conservative 31-day retry envelope
 before running paid traffic. Initiator reading of seven issues, with at least
 five valuable issues within ten minutes and factual checks for all seven, remains
 separate product acceptance.
+
+The initial deployed smoke results and remaining limits are recorded in
+[hosted validation](hosted-validation-2026-11-10.md). Model experiments and their
+actual token-based cost calculations are recorded in
+[model validation](model-validation-2026-11-10.md).

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from typing import Any, Callable
 from urllib.request import Request, urlopen
 
@@ -28,6 +29,8 @@ def load_github_sources(entry: dict, fetch: Callable[[str], Any] | None = None) 
                 "tag_name": item.get("tag_name"),
                 "published_at": item.get("published_at"),
                 "html_url": item.get("html_url"),
+                "draft": False,
+                "prerelease": False,
             }
             for item in releases
             if isinstance(item, dict) and item.get("draft") is False and item.get("prerelease") is False
@@ -36,6 +39,10 @@ def load_github_sources(entry: dict, fetch: Callable[[str], Any] | None = None) 
 
 
 def _get_json(url: str) -> Any:
-    request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "daily-trending/1.0"})
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "daily-trending/1.0"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, headers=headers)
     with urlopen(request, timeout=20) as response:
         return json.loads(response.read().decode("utf-8"))

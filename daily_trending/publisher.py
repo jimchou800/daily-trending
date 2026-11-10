@@ -58,7 +58,7 @@ def _recover_publication(root: Path) -> None:
         current_index = json.loads(index_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         current_index = {}
-    is_current = current_index.get("latest_report_date", "") <= report["report_date"]
+    is_current = (current_index.get("latest_report_date") or "") <= report["report_date"]
     if is_current:
         _write_json_atomic(index_path, manifest["index"])
         (root / "index.html.tmp").write_text(manifest["homepage"], encoding="utf-8")
@@ -97,7 +97,7 @@ def publish_report(
         report["published_at"] = existing.get("published_at", published_at)
     index = root / "index.json"
     current = json.loads(index.read_text(encoding="utf-8")) if index.exists() else {}
-    if current.get("latest_report_date", "") > report["report_date"]:
+    if (current.get("latest_report_date") or "") > report["report_date"]:
         return target
     current["latest_report_date"] = report["report_date"]
     current["published_at"] = report["published_at"]

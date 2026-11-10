@@ -98,7 +98,12 @@ class DashScopeTests(unittest.TestCase):
         for model in ("qwen3.8-max", "custom-model-v2", "dashscope/custom-model-v2"):
             with self.subTest(model=model):
                 client = DashScopeClient(api_key="test-key", config=DashScopeConfig(model=model))
-                response = json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+                response = json.dumps(
+                    {
+                        "choices": [{"message": {"content": "{}"}}],
+                        "usage": {"prompt_tokens": 12, "completion_tokens": 2},
+                    }
+                ).encode()
                 with patch("daily_trending.dashscope.urlopen", return_value=BytesIO(response)) as http:
                     self.assertEqual(client.complete("source text"), "{}")
                 expected = "qwen3.8-max" if model == "qwen3.8-max" else "custom-model-v2"
@@ -126,7 +131,12 @@ class DashScopeTests(unittest.TestCase):
     def test_http_request_uses_remote_model_id_without_changing_config_identity(self):
         config = DashScopeConfig()
         client = DashScopeClient(api_key="test-key", config=config)
-        response = json.dumps({"choices": [{"message": {"content": '{"ok":true}'}}]}).encode()
+        response = json.dumps(
+            {
+                "choices": [{"message": {"content": '{"ok":true}'}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 5},
+            }
+        ).encode()
         with patch("daily_trending.dashscope.urlopen", return_value=BytesIO(response)) as http:
             self.assertEqual(json.loads(client.complete("source text")), {"ok": True})
         request = http.call_args.args[0]

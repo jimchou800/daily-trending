@@ -1,6 +1,8 @@
 import json
+import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from daily_trending.collector import parse_trending_html
 from daily_trending.analyzer import analyze_live_snapshot
@@ -20,6 +22,22 @@ TRENDING_HTML = (Path(__file__).parent / "fixtures" / "trending_page.html").read
 
 
 class LiveCollectorTests(unittest.TestCase):
+    def test_github_api_request_uses_configured_workflow_token(self):
+        from daily_trending.github_sources import _get_json
+
+        response = type(
+            "Response",
+            (),
+            {"read": lambda self: b'{"ok":true}', "__enter__": lambda self: self, "__exit__": lambda self, *_: None},
+        )()
+        with (
+            patch.dict(os.environ, {"GITHUB_TOKEN": "test-token"}),
+            patch("daily_trending.github_sources.urlopen", return_value=response) as urlopen_mock,
+        ):
+            self.assertEqual(_get_json("https://api.github.com/repos/acme/demo"), {"ok": True})
+        request = urlopen_mock.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
+
     def test_github_source_loader_rejects_invalid_repository_and_handles_missing_sources(self):
         with self.assertRaisesRegex(ValueError, "invalid repository"):
             load_github_sources({"repository": "bad"}, lambda _: {})
@@ -68,6 +86,8 @@ class LiveCollectorTests(unittest.TestCase):
         result = load_github_sources({"repository": "acme/first"}, fetch)
         self.assertEqual(result["readme"], "# README")
         self.assertEqual([release["tag_name"] for release in result["releases"]], ["v1"])
+        self.assertIs(result["releases"][0]["draft"], False)
+        self.assertIs(result["releases"][0]["prerelease"], False)
         self.assertTrue(all(url.startswith("https://api.github.com/repos/acme/first") for url in urls))
 
 

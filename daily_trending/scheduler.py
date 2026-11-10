@@ -122,6 +122,7 @@ def homepage_status(site_root: Path, now: datetime | None = None) -> dict[str, o
     published_at: str | None = None
     try:
         data = json.loads(index_path.read_text(encoding="utf-8"))
+        require(isinstance(data, dict), "index must be an object")
         latest = data.get("latest_report_date")
         published_at = data.get("published_at")
         if latest is not None:
@@ -130,42 +131,75 @@ def homepage_status(site_root: Path, now: datetime | None = None) -> dict[str, o
         latest = None
         published_at = None
     today = current.date()
-    if latest and datetime.fromisoformat(latest).date() == today:
+    valid_publication = False
+    try:
+        published = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        valid_publication = (
+            latest is not None
+            and published.tzinfo is not None
+            and published.astimezone(BEIJING).date().isoformat() == latest
+            and published < publication_deadline(latest)
+            and published <= current
+        )
+    except (AttributeError, TypeError, ValueError):
+        pass
+    if valid_publication and latest == today.isoformat():
         return {"status": "published", "latest_report_date": latest, "published_at": published_at, "message": ""}
     if current.time() < time(9):
         return {
-            "status": "published" if latest else "unpublished",
+            "status": "published" if valid_publication else "unpublished",
             "latest_report_date": latest,
             "published_at": published_at,
-            "message": "" if latest else "尚未发布",
+            "message": "" if valid_publication else "尚未发布",
         }
     return {
         "status": "failed",
         "latest_report_date": latest,
         "published_at": published_at,
-        "message": "今日日报生成失败",
+        "message": "今日日报生成失败" if latest else "尚未发布；今日日报生成失败",
     }
 
 
 def render_homepage(report_html: str) -> str:
     """Add a browser-clock status banner that handles missed runs without task state."""
-    banner = '<p id="daily-status" role="status" aria-live="polite"></p>'
-    script = """<script>
+    banner = '<p id="daily-status" role="status" aria-live="polite" hidden></p>'
+    script = r"""<script>
 (() => {
   const status = document.getElementById('daily-status');
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', hourCycle: 'h23'
-  }).formatToParts(new Date());
-  const value = key => parts.find(part => part.type === key).value;
-  const today = `${value('year')}-${value('month')}-${value('day')}`;
-  const afterDeadline = Number(value('hour')) >= 9;
-  fetch('./index.json', { cache: 'no-store' }).then(response => response.ok ? response.json() : {})
-    .catch(() => ({})).then(index => {
-      if (index.latest_report_date === today) return;
-      status.textContent = afterDeadline ? '今日日报生成失败' : (index.latest_report_date ? '' : '尚未发布');
-      status.hidden = !status.textContent;
-    });
+  });
+  let index = {};
+  const update = () => {
+    const now = new Date();
+    const parts = formatter.formatToParts(now);
+    const value = key => parts.find(part => part.type === key).value;
+    const today = `${value('year')}-${value('month')}-${value('day')}`;
+    const latest = index.latest_report_date;
+    const stamp = index.published_at;
+    const published = typeof stamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(stamp)
+      ? Date.parse(stamp) : NaN;
+    const deadline = Date.parse(`${latest}T09:00:00+08:00`);
+    const start = Date.parse(`${latest}T00:00:00+08:00`);
+    const valid = Number.isFinite(published) && published >= start && published < deadline && published <= now;
+    const afterDeadline = Number(value('hour')) >= 9;
+    status.textContent = valid && latest === today ? '' : (afterDeadline
+      ? (latest ? '今日日报生成失败' : '尚未发布；今日日报生成失败')
+      : (valid ? '' : '尚未发布'));
+    status.hidden = !status.textContent;
+  };
+  const refresh = () => {
+    update();
+    fetch('./index.json', { cache: 'no-store' }).then(response => response.ok ? response.json() : {})
+      .catch(() => ({})).then(data => {
+        index = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        update();
+      });
+  };
+  refresh();
+  setInterval(update, 1000);
+  setInterval(refresh, 60000);
 })();
 </script>"""
     if "</body>" not in report_html:

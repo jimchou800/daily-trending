@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.request import Request, urlopen
 
+INPUT_CNY_PER_MILLION = 12
+OUTPUT_CNY_PER_MILLION = 36
+CHAT_INPUT_OVERHEAD = 256
+OUTPUT_TOKEN_TOLERANCE = 10
+
 
 class ModelCallError(RuntimeError):
     """Raised when a model call cannot produce a valid JSON response."""
@@ -30,7 +35,21 @@ class DashScopeConfig:
     max_calls: int = 40
     max_retries: int = 2
     monthly_budget_cny: float = 30.0
-    estimated_call_cost_cny: float = 0.05
+    estimated_call_cost_cny: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Reject invalid limits before any transport or reservation is possible."""
+        for name in ("max_input_chars", "max_output_tokens", "max_output_chars", "max_calls", "max_retries"):
+            value = getattr(self, name)
+            minimum = 0 if name in ("max_calls", "max_retries") else 1
+            if type(value) is not int or value < minimum:
+                raise ValueError(f"invalid {name}")
+        if self.max_output_tokens > 128000 or self.max_retries > 2:
+            raise ValueError("output or retry limit exceeds supported maximum")
+        for name in ("monthly_budget_cny", "estimated_call_cost_cny"):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not 0 <= value <= 30 or not math.isfinite(value):
+                raise ValueError(f"invalid {name}")
 
 
 class DashScopeClient:
@@ -50,6 +69,10 @@ class DashScopeClient:
         self.before_call = before_call
         self.calls_used = 0
         self.estimated_spend_cny = 0.0
+        self.pending_call_cost_cny = 0.0
+        self.accounting_blocked = False
+        self.usage_records: list[dict[str, Any]] = []
+        self._require_usage = transport is None
 
     def restore_usage(self, calls_used: int, estimated_spend_cny: float) -> None:
         """Restore this period's calls and cumulative monthly spend before requests."""
@@ -72,6 +95,12 @@ class DashScopeClient:
             raise ModelCallError("model input is empty")
         if len(source_text) > self.config.max_input_chars:
             raise ModelCallError("model input exceeds configured limit")
+        input_estimate = len(source_text.encode("utf-8")) + CHAT_INPUT_OVERHEAD
+        output_estimate = self.config.max_output_tokens + OUTPUT_TOKEN_TOLERANCE
+        self.pending_call_cost_cny = max(
+            self.config.estimated_call_cost_cny,
+            (input_estimate * INPUT_CNY_PER_MILLION + output_estimate * OUTPUT_CNY_PER_MILLION) / 1_000_000,
+        )
         # Keep the configured provider-qualified identity for cache keys; the
         # OpenAI-compatible endpoint expects only DashScope's remote model ID.
         model = self.config.model.removeprefix("dashscope/")
@@ -91,6 +120,7 @@ class DashScopeClient:
             self._reserve_call()
             try:
                 response = self.transport(payload, self.api_key)
+                self._record_usage(response, input_estimate, output_estimate)
                 content = self._extract_content(response)
                 if len(content) > self.config.max_output_chars:
                     raise ModelCallError("model output exceeds configured limit")
@@ -107,13 +137,47 @@ class DashScopeClient:
         raise ModelCallError(f"model call failed: {last_error}") from last_error
 
     def _reserve_call(self) -> None:
+        if self.accounting_blocked:
+            raise BudgetExceeded("model accounting blocked after invalid usage or reservation exceeded")
         if self.calls_used >= self.config.max_calls:
             raise BudgetExceeded("model call limit exhausted")
-        next_spend = self.estimated_spend_cny + self.config.estimated_call_cost_cny
+        next_spend = self.estimated_spend_cny + self.pending_call_cost_cny
         if next_spend > self.config.monthly_budget_cny:
             raise BudgetExceeded("monthly model budget exhausted")
         self.calls_used += 1
         self.estimated_spend_cny = next_spend
+
+    def _record_usage(self, response: dict[str, Any], input_estimate: int, output_estimate: int) -> None:
+        usage = response.get("usage") if isinstance(response, dict) else None
+        record = {"reserved_cost_cny": self.pending_call_cost_cny, "usage_status": "unavailable"}
+        self.usage_records.append(record)
+        if usage is None and not self._require_usage:
+            return
+        if not isinstance(usage, dict) or any(
+            type(usage.get(key)) is not int or usage[key] < 0 for key in ("prompt_tokens", "completion_tokens")
+        ):
+            self.accounting_blocked = True
+            raise BudgetExceeded("provider usage unavailable or invalid; accounting blocked")
+        prompt = usage["prompt_tokens"]
+        output = usage["completion_tokens"]
+        if prompt > 1_000_000 or output > 128_000 + OUTPUT_TOKEN_TOLERANCE:
+            self.accounting_blocked = True
+            raise BudgetExceeded("provider usage exceeds supported model limits; accounting blocked")
+        total = usage.get("total_tokens", prompt + output)
+        if type(total) is not int or total != prompt + output:
+            self.accounting_blocked = True
+            raise BudgetExceeded("provider usage inconsistent; accounting blocked")
+        actual_cost = (prompt * INPUT_CNY_PER_MILLION + output * OUTPUT_CNY_PER_MILLION) / 1_000_000
+        record.update(
+            usage_status="reported",
+            prompt_tokens=prompt,
+            completion_tokens=output,
+            total_tokens=total,
+            actual_cost_cny=actual_cost,
+        )
+        if prompt > input_estimate or output > output_estimate or actual_cost > self.pending_call_cost_cny:
+            self.accounting_blocked = True
+            raise BudgetExceeded("provider usage exceeded local reservation; accounting blocked")
 
     @staticmethod
     def _extract_content(response: dict[str, Any]) -> str:

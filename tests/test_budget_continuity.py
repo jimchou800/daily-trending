@@ -133,7 +133,7 @@ class BudgetContinuityTests(unittest.TestCase):
             client.complete("source")
         self.assertEqual(calls, ["request"])
         self.assertEqual(client.calls_used, 1)
-        self.assertEqual(client.estimated_spend_cny, 0.05)
+        self.assertAlmostEqual(client.estimated_spend_cny, 0.068304)
 
     def test_reused_client_and_monthly_exhaustion_cannot_reset_or_double_charge_usage(self):
         from daily_trending.persistence import ArtifactStore

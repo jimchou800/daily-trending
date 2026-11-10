@@ -1,3 +1,4 @@
+from tests.model_stub import classification_response
 import json
 import tempfile
 import unittest
@@ -15,10 +16,9 @@ class BudgetContinuityTests(unittest.TestCase):
 
             def transport(payload, _key):
                 calls.append(payload)
-                repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
-                return {"choices": [{"message": {"content": json.dumps({"repository": repository, "is_ai": False})}}]}
+                return classification_response(payload)
 
-            config = DashScopeConfig(max_calls=2, max_retries=0, estimated_call_cost_cny=0.1, monthly_budget_cny=0.4)
+            config = DashScopeConfig(max_calls=2, max_retries=0, estimated_call_cost_cny=0.1, monthly_budget_cny=0.2)
             for period in ("2026-11-09", "2026-11-10"):
                 run_live_pipeline(
                     root / period,
@@ -29,10 +29,10 @@ class BudgetContinuityTests(unittest.TestCase):
                     source_loader=lambda _: {"readme": "README"},
                     artifact_root=root / "artifacts",
                 )
-            self.assertEqual(len(calls), 4)
+            self.assertEqual(len(calls), 2)
             ledger = json.loads((root / "artifacts/monthly-2026-11.json").read_text())
-            self.assertEqual(ledger["calls_used"], 4)
-            self.assertAlmostEqual(ledger["estimated_spend_cny"], 0.4)
+            self.assertEqual(ledger["calls_used"], 2)
+            self.assertAlmostEqual(ledger["estimated_spend_cny"], 0.2)
 
     def test_missing_monthly_ledger_with_existing_period_state_stops_before_network(self):
         from daily_trending.persistence import ArtifactStore
@@ -133,7 +133,7 @@ class BudgetContinuityTests(unittest.TestCase):
             client.complete("source")
         self.assertEqual(calls, ["request"])
         self.assertEqual(client.calls_used, 1)
-        self.assertEqual(client.estimated_spend_cny, 0.05)
+        self.assertAlmostEqual(client.estimated_spend_cny, 0.068304)
 
     def test_reused_client_and_monthly_exhaustion_cannot_reset_or_double_charge_usage(self):
         from daily_trending.persistence import ArtifactStore
@@ -144,13 +144,12 @@ class BudgetContinuityTests(unittest.TestCase):
 
             def transport(payload, _key):
                 calls.append(payload)
-                repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
-                return {"choices": [{"message": {"content": json.dumps({"repository": repository, "is_ai": False})}}]}
+                return classification_response(payload)
 
             client = DashScopeClient(
                 api_key="test",
                 transport=transport,
-                config=DashScopeConfig(max_calls=2, max_retries=0, estimated_call_cost_cny=0.1, monthly_budget_cny=0.4),
+                config=DashScopeConfig(max_calls=2, max_retries=0, estimated_call_cost_cny=0.1, monthly_budget_cny=0.2),
             )
             for period in ("2026-11-09", "2026-11-10"):
                 run_live_pipeline(
@@ -162,12 +161,12 @@ class BudgetContinuityTests(unittest.TestCase):
                     source_loader=lambda _: {"readme": "README"},
                     artifact_root=root / "artifacts",
                 )
-            self.assertEqual(len(calls), 4)
+            self.assertEqual(len(calls), 2)
             first_state = ArtifactStore(root / "artifacts", "2026-11-09").state
             second = ArtifactStore(root / "artifacts", "2026-11-10")
-            self.assertAlmostEqual(first_state["estimated_spend_cny"], 0.2)
-            self.assertAlmostEqual(second.state["estimated_spend_cny"], 0.2)
-            self.assertEqual(second.monthly_usage()["calls_used"], 4)
+            self.assertAlmostEqual(first_state["estimated_spend_cny"], 0.1)
+            self.assertAlmostEqual(second.state["estimated_spend_cny"], 0.1)
+            self.assertEqual(second.monthly_usage()["calls_used"], 2)
             with self.assertRaises(ValueError):
                 run_live_pipeline(
                     root / "blocked",
@@ -178,5 +177,5 @@ class BudgetContinuityTests(unittest.TestCase):
                     source_loader=lambda _: {"readme": "README"},
                     artifact_root=root / "artifacts",
                 )
-            self.assertEqual(len(calls), 4)
-            self.assertEqual(second.monthly_usage()["estimated_spend_cny"], 0.4)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(second.monthly_usage()["estimated_spend_cny"], 0.2)

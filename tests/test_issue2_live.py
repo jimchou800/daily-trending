@@ -1,3 +1,4 @@
+from tests.model_stub import classification_response
 import json
 import os
 import unittest
@@ -97,7 +98,12 @@ class DashScopeTests(unittest.TestCase):
         for model in ("qwen3.8-max", "custom-model-v2", "dashscope/custom-model-v2"):
             with self.subTest(model=model):
                 client = DashScopeClient(api_key="test-key", config=DashScopeConfig(model=model))
-                response = json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+                response = json.dumps(
+                    {
+                        "choices": [{"message": {"content": "{}"}}],
+                        "usage": {"prompt_tokens": 12, "completion_tokens": 2},
+                    }
+                ).encode()
                 with patch("daily_trending.dashscope.urlopen", return_value=BytesIO(response)) as http:
                     self.assertEqual(client.complete("source text"), "{}")
                 expected = "qwen3.8-max" if model == "qwen3.8-max" else "custom-model-v2"
@@ -125,7 +131,12 @@ class DashScopeTests(unittest.TestCase):
     def test_http_request_uses_remote_model_id_without_changing_config_identity(self):
         config = DashScopeConfig()
         client = DashScopeClient(api_key="test-key", config=config)
-        response = json.dumps({"choices": [{"message": {"content": '{"ok":true}'}}]}).encode()
+        response = json.dumps(
+            {
+                "choices": [{"message": {"content": '{"ok":true}'}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 5},
+            }
+        ).encode()
         with patch("daily_trending.dashscope.urlopen", return_value=BytesIO(response)) as http:
             self.assertEqual(json.loads(client.complete("source text")), {"ok": True})
         request = http.call_args.args[0]
@@ -247,27 +258,28 @@ class DashScopeTests(unittest.TestCase):
 
         def transport(payload, api_key):
             calls.append(payload)
+            if "classifications" in payload["messages"][0]["content"].split("\n", 1)[0]:
+                return classification_response(payload, is_ai=True, evidence="AI tool")
             repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
             if repository == "acme/first":
                 return {"choices": [{"message": {"content": "not json"}}]}
             return {"choices": [{"message": {"content": json.dumps({"is_ai": False})}}]}
 
         client = DashScopeClient(api_key="secret", transport=transport, config=DashScopeConfig(max_retries=0))
-        result = analyze_live_snapshot(snapshot, client, lambda entry: {"repository_url": entry["repository_url"]})
+        result = analyze_live_snapshot(snapshot, client, lambda entry: {"readme": "AI tool"})
         self.assertEqual(result["stage"]["status"], "failed")
         self.assertEqual(result["analyses"], [])
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertTrue(any("analysis failed" in error for error in result["stage"]["errors"]))
 
     def test_live_analyzer_accepts_a_verified_empty_ai_selection(self):
         snapshot = collect_snapshot_from_entries()
 
         def transport(payload, _api_key):
-            repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
-            return {"choices": [{"message": {"content": json.dumps({"repository": repository, "is_ai": False})}}]}
+            return classification_response(payload, is_ai=False, evidence="ordinary utility")
 
         client = DashScopeClient(api_key="secret", transport=transport, config=DashScopeConfig(max_retries=0))
-        result = analyze_live_snapshot(snapshot, client, lambda entry: {"repository_url": entry["repository_url"]})
+        result = analyze_live_snapshot(snapshot, client, lambda entry: {"readme": "ordinary utility"})
         self.assertEqual(result["stage"]["status"], "succeeded")
         self.assertEqual(result["analyses"], [])
         self.assertEqual(result["stage"]["errors"], [])
@@ -276,6 +288,12 @@ class DashScopeTests(unittest.TestCase):
         from tempfile import TemporaryDirectory
 
         def transport(payload, api_key):
+            if "classifications" in payload["messages"][0]["content"].split("\n", 1)[0]:
+                data = classification_response(payload, is_ai=False, evidence="AI tool")
+                value = json.loads(data["choices"][0]["message"]["content"])
+                value["classifications"][0]["is_ai"] = True
+                data["choices"][0]["message"]["content"] = json.dumps(value)
+                return data
             repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
             response = {"repository": repository, "is_ai": repository == "acme/first"}
             if response["is_ai"]:
@@ -301,7 +319,7 @@ class DashScopeTests(unittest.TestCase):
                 "2026-11-09T00:30:00Z",
                 client,
                 fetch=lambda url: TRENDING_HTML,
-                source_loader=lambda entry: {"repository_url": entry["repository_url"]},
+                source_loader=lambda entry: {"readme": "AI tool"},
             )
             report = json.loads(result.report_path.read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "sample_preview")

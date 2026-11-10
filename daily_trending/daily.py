@@ -12,7 +12,7 @@ from daily_trending.dashscope import DashScopeClient
 from daily_trending.github_sources import load_github_sources
 from daily_trending.organizer import render_html
 from daily_trending.pipeline import run_live_pipeline
-from daily_trending.publisher import publish_report
+from daily_trending.publisher import publish_report, recover_publication
 from daily_trending.scheduler import BEIJING, BeijingScheduler, render_homepage, run_with_retries
 
 
@@ -65,7 +65,6 @@ def run_daily(
         if not scheduler.before_deadline():
             raise TimeoutError("report publication deadline has passed")
 
-    check_deadline()
     state_root.mkdir(parents=True, exist_ok=True)
     marker = state_root / "initialized"
     if not marker.exists() and (site_root / "archive").exists():
@@ -91,7 +90,14 @@ def run_daily(
 
     def attempt(_attempt_number: int) -> Path:
         check_deadline()
+        recovered = recover_publication(site_root, now=clock())
+        if recovered is not None and recovered.parent.name == report_date:
+            return recovered
         collected_at = clock().astimezone(timezone.utc).isoformat(timespec="seconds")
+        usage_marker = state_root / "usage-month"
+        temporary_marker = usage_marker.with_suffix(".tmp")
+        temporary_marker.write_text(report_date[:7], encoding="utf-8")
+        temporary_marker.replace(usage_marker)
         result = run_live_pipeline(
             state_root / "output",
             report_date,
@@ -115,6 +121,15 @@ def run_daily(
         )
 
     try:
+        recover_publication(site_root, now=clock())
+        check_deadline()
+        usage_month = state_root / "usage-month"
+        if usage_month.exists():
+            month = usage_month.read_text(encoding="utf-8").strip()
+            if len(month) != 7 or datetime.strptime(month, "%Y-%m").strftime("%Y-%m") != month:
+                raise ValueError("durable usage month is corrupt")
+            if month == report_date[:7] and not (state_root / "artifacts" / f"monthly-{month}.json").exists():
+                raise ValueError("durable monthly usage ledger is missing")
         marker.touch(exist_ok=True)
         _initialize_site(site_root)
         existing = site_root / "archive" / report_date / "report.json"

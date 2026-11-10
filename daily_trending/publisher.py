@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .contracts import require, require_date, require_github_url, require_timestamp, validate_public_report
 from .organizer import render_html
-from .scheduler import render_homepage
+from .scheduler import BEIJING, publication_deadline, render_homepage
 
 TRANSACTION_FILE = ".publication-transaction.json"
 
@@ -42,34 +42,97 @@ def _write_json_atomic(path: Path, value: object) -> None:
     os.replace(temporary, path)
 
 
-def _recover_publication(root: Path) -> None:
-    """Complete a publication left between atomic file replacements."""
+def _publication_files(manifest: dict) -> dict[str, str]:
+    report = manifest["report"]
+    date = report["report_date"]
+
+    def encode(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+
+    return {
+        f"archive/{date}/index.html": manifest["html"],
+        f"archive/{date}/report.json": encode(report),
+        "index.json": encode(manifest["index"]),
+        "index.html": manifest["homepage"],
+        "history.json": encode(manifest["history"]),
+    }
+
+
+def _rollback_publication(root: Path, manifest: dict) -> None:
+    backups = manifest.get("backups")
+    require(isinstance(backups, dict), "interrupted publication has no rollback backups; operator recovery required")
+    for relative, proposed in _publication_files(manifest).items():
+        path = root / relative
+        # A newer publication or correction owns any different content.
+        if not path.exists() or path.read_text(encoding="utf-8") != proposed:
+            continue
+        original = backups[relative]
+        if original is None:
+            path.unlink()
+        else:
+            temporary = path.with_suffix(path.suffix + ".rollback.tmp")
+            temporary.write_text(original, encoding="utf-8")
+            os.replace(temporary, path)
+    (root / TRANSACTION_FILE).unlink()
+
+
+def recover_publication(site_root: Path, *, now: datetime) -> Path | None:
+    """Resume an interrupted commit only on its own day before 09:00.
+
+    Expired or superseded transactions roll back only their own writes using
+    durable original backups. Different content from newer commits is retained.
+    Returns the recovered report path, or None when absent or abandoned.
+    """
+    root = Path(site_root)
     manifest_path = root / TRANSACTION_FILE
     if not manifest_path.exists():
-        return
+        return None
+    require(now.tzinfo is not None, "recovery clock must be timezone-aware")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     report = manifest["report"]
-    archive = root / "archive" / report["report_date"]
+    date = report["report_date"]
+    index_path = root / "index.json"
+    current_index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {}
+    current_time = now.astimezone(BEIJING)
+    if (
+        current_time.date().isoformat() != date
+        or current_time >= publication_deadline(date)
+        or (current_index.get("latest_report_date") or "") > date
+    ):
+        _rollback_publication(root, manifest)
+        return None
+    # Restore the original state before changing the proposed timestamp. This
+    # keeps rollback byte comparisons valid even if the resumed commit fails.
+    _rollback_publication(root, manifest)
+    original_report = manifest["backups"][f"archive/{date}/report.json"]
+    if original_report is None:
+        stamp = current_time.astimezone(timezone.utc).isoformat(timespec="seconds")
+        report["published_at"] = stamp
+        manifest["index"]["published_at"] = stamp
+        for item in manifest["history"]:
+            if item.get("report_date") == date:
+                item["published_at"] = stamp
+        manifest["html"] = render_html(report)
+        manifest["homepage"] = render_homepage(manifest["html"])
+    _write_json_atomic(manifest_path, manifest)
+    return _commit_publication(root, manifest)
+
+
+def _commit_publication(root: Path, manifest: dict) -> Path:
+    report = manifest["report"]
+    date = report["report_date"]
+    manifest_path = root / TRANSACTION_FILE
+    index_path = root / "index.json"
+    archive = root / "archive" / date
     archive.mkdir(parents=True, exist_ok=True)
     (archive / "index.html").write_text(manifest["html"], encoding="utf-8")
     _write_json_atomic(archive / "report.json", report)
-    index_path = root / "index.json"
-    try:
-        current_index = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
-        current_index = {}
-    is_current = (current_index.get("latest_report_date") or "") <= report["report_date"]
-    if is_current:
-        _write_json_atomic(index_path, manifest["index"])
-        (root / "index.html.tmp").write_text(manifest["homepage"], encoding="utf-8")
-        os.replace(root / "index.html.tmp", root / "index.html")
-    history_by_date = {
-        item.get("report_date"): item for item in load_successful_history(root) if item.get("report_date")
-    }
-    history_by_date.setdefault(report["report_date"], report)
-    merged_history = sorted(history_by_date.values(), key=lambda item: item.get("report_date", ""), reverse=True)
-    _write_json_atomic(root / "history.json", merged_history)
-    manifest_path.unlink(missing_ok=True)
+    _write_json_atomic(index_path, manifest["index"])
+    (root / "index.html.tmp").write_text(manifest["homepage"], encoding="utf-8")
+    os.replace(root / "index.html.tmp", root / "index.html")
+    _write_json_atomic(root / "history.json", manifest["history"])
+    manifest_path.unlink()
+    return archive / "report.json"
 
 
 def publish_report(
@@ -88,7 +151,9 @@ def publish_report(
     report["published_at"] = published_at
     report["status"] = "published"
     root = Path(site_root)
-    _recover_publication(root)
+    recovered = recover_publication(root, now=current_time)
+    if recovered is not None and recovered.parent.name == report["report_date"]:
+        return recovered
     archive = root / "archive" / report["report_date"]
     archive.mkdir(parents=True, exist_ok=True)
     target = archive / "report.json"
@@ -113,8 +178,12 @@ def publish_report(
         "index": current,
         "history": history,
     }
+    manifest["backups"] = {
+        relative: (root / relative).read_text(encoding="utf-8") if (root / relative).exists() else None
+        for relative in _publication_files(manifest)
+    }
     _write_json_atomic(root / TRANSACTION_FILE, manifest)
-    _recover_publication(root)
+    _commit_publication(root, manifest)
     return target
 
 

@@ -80,9 +80,10 @@ affect public availability. Do not select the paid Workers plan or enable R2
 without authorization. The CNY30 monthly hard admission limit protects spending;
 it does not by itself prove that `qwen3.8-max` can generate every day. Verify the
 applicable region/tariff/token limits and conservative 31-day retry envelope
-before running paid traffic. Initiator reading of seven issues, with at least
-five valuable issues within ten minutes and factual checks for all seven, remains
-separate product acceptance.
+before running paid traffic. The initiator accepted the current first release on
+2026-11-10 after reading it and removed the seven-issue reading gate; see the
+[acceptance record](acceptance-trial.md). This decision does not turn unverified
+technical observations into passed checks.
 
 The initial deployed smoke results and remaining limits are recorded in
 [hosted validation](hosted-validation-2026-11-10.md). Model experiments and their

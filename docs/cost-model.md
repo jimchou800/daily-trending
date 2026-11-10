@@ -1,6 +1,6 @@
 # Request reservation and cost evidence
 
-Verified public documentation: 2026-11-10. This is an engineering estimate, not account validation or seven-issue product acceptance. Subsequent bounded real requests and token-based cost calculations are recorded in [model validation](model-validation-2026-11-10.md).
+Verified public documentation: 2026-11-10. This is an engineering estimate, not account validation or initiator product acceptance. Subsequent bounded real requests and token-based cost calculations are recorded in [model validation](model-validation-2026-11-10.md).
 
 Primary sources:
 

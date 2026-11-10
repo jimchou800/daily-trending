@@ -35,8 +35,9 @@ These observations do not establish successful on-time live publication, hosted
 correction/rollback, actual shared quotas, free runner capacity, or exact durable
 commit timing. The platform crash-window limitation in
 [hosted publication](hosted-publication.md) remains unresolved acceptance work.
-The initiator's seven-issue trial is not complete. Do not mark those acceptance
-conditions complete from this smoke.
+At the time of this smoke, the initiator's seven-issue trial had not started.
+The later acceptance decision below supersedes that reading gate; this smoke
+still does not establish unobserved technical conditions.
 
 ## Explicit one-day maintenance publication
 
@@ -72,3 +73,11 @@ After every issue meets its acceptance conditions, the maintainer authorized
 merging the PR, closing the corresponding GitHub issues, and cleaning inactive
 merged branches/worktrees and verified intermediate untracked files. Preserve
 uncommitted user work, runtime credentials and required deployment state.
+
+## Subsequent initiator acceptance decision
+
+On 2026-11-10 the initiator confirmed reading the current report and being
+satisfied, removed the continuous seven-issue reading requirement, and accepted
+the current first release. See [acceptance record](acceptance-trial.md). This is
+the initiator's decision, not a claim of seven completed reading records or
+on-time publication. Normal deadline, factual and budget rules remain active.

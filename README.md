@@ -16,4 +16,4 @@ python scripts/check_coverage.py
 
 托管端在 `worker/` 执行 `npm ci` 和 `npm run check`，分别检查 TypeScript 与实际浏览器脚本的覆盖率。上述自动测试使用保存样本和外部边界替身，不调用付费模型。真实模型密钥从 `AI_DASHSCOPE_API_KEY` 读取，配置保留 `dashscope/qwen3.8-max`；已有[真实调用与费用记录](docs/model-validation-2026-11-10.md)，不等于完整月度验收。
 
-本地日任务入口为 `python -m daily_trending.daily`，会进行真实采集和模型调用。线上入口为 `python -m daily_trending.hosted_daily`，权威状态与预算由远端持久保存；启用前遵循[部署约束](docs/deployment.md)。[公共网站](https://daily-trending-authority.zhoumin808.workers.dev)已部署，定时工作流仍须合入 main 才会运行；[上线验证记录](docs/hosted-validation-2026-11-10.md)列明已验证和未验证范围。发起人的连续 7 期试读使用[试读记录](docs/acceptance-trial.md)，自动检查不替代产品验收。
+本地日任务入口为 `python -m daily_trending.daily`，会进行真实采集和模型调用。线上入口为 `python -m daily_trending.hosted_daily`，权威状态与预算由远端持久保存；启用前遵循[部署约束](docs/deployment.md)。[公共网站](https://daily-trending-authority.zhoumin808.workers.dev)已部署，定时工作流仍须合入 main 才会运行；[上线验证记录](docs/hosted-validation-2026-11-10.md)列明已验证和未验证范围。发起人已于 2026-11-10 确认阅读满意并接受当前首版，取消连续 7 期试读要求，见[验收记录](docs/acceptance-trial.md)；自动检查、上线实测和产品验收分别记录。

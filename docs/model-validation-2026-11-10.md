@@ -73,5 +73,8 @@ This is a saved-live-source preview, not an on-time public issue or seven-day
 reader acceptance.
 
 See [cost model](cost-model.md) for the separate conservative normal-day capacity
-calculation. Selection/fact review, deployed quota/timing validation and seven
-issues of initiator reading records remain necessary.
+calculation. These experiments did not establish selection/fact review or deployed
+quota/timing validation. The initiator subsequently accepted the current first
+release and removed the seven-issue reading gate on 2026-11-10; see the
+[acceptance record](acceptance-trial.md). The experiment results above remain
+historical evidence with their stated limits.

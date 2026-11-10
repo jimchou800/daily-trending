@@ -61,4 +61,8 @@ The server stops admitting new publications five seconds before09:00 as an opera
 
 Report blobs are <=512KiB, cumulative admitted artifacts/blobs <=2MiB/date, and tracked payload growth stops at800MiB (headroom below the stricter1GiB Free per-object bound). No automatic archive deletion occurs. This counter includes stored JSON payload growth, not SQLite/index overhead; monitor real storage/row/CPU/request usage and stop earlier if needed. Free quota exhaustion may affect old-page availability; this is not established by retaining bytes. Do not claim unlimited archiving or daily model-budget feasibility solely from existence of free quotas.
 
-Unverified outside local tests: account eligibility, actual bindings/secrets/hostname, deployed publication/rollback behavior, precise hard-deadline acceptance, free runner allocation/scheduling reliability, quota/CPU/storage observations, live phone/desktop reads, model price viability for31 days including retries, and the initiator's seven-issue reading acceptance. The early external runner should start before the deadline (e.g.08:15 Beijing) and call these same authority routes; no delayed trigger can backfill yesterday.
+Unverified outside local tests: account eligibility, actual bindings/secrets/hostname, deployed publication/rollback behavior, precise hard-deadline acceptance, free runner allocation/scheduling reliability, quota/CPU/storage observations, live phone/desktop reads, model price viability for31 days including retries. The early external runner should start before the deadline (e.g.08:15 Beijing) and call these same authority routes; no delayed trigger can backfill yesterday.
+
+The initiator accepted the current first release after reading it on 2026-11-10
+and removed the seven-issue reading gate; see [acceptance record](acceptance-trial.md).
+The technical timing and quota limitations above remain recorded independently.

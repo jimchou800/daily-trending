@@ -18,7 +18,7 @@ class PersistenceTests(unittest.TestCase):
             old_cache = {
                 key: {
                     "contract_version": "1.0",
-                    "schema": "2",
+                    "schema": "3",
                     "snapshot_id": "abc",
                     "model": "model",
                     "analysis": {"repository": key, "is_ai": True, "ai_relevance_evidence": "agent ready"},
@@ -34,7 +34,7 @@ class PersistenceTests(unittest.TestCase):
                     "contract_version": "1.0",
                     "period_id": "2026-11-09",
                     "snapshot_id": "abc",
-                    "analysis_schema": "2",
+                    "analysis_schema": "3",
                     "stage": {"name": "analyzer", "status": "succeeded"},
                 },
             )

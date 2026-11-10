@@ -178,7 +178,11 @@ def analyze_live_snapshot(
             require({r.get("repository") for r in responses} == expected, "classification repositories mismatch")
             by_repo = {r["repository"]: r for r in responses}
             for context in batch:
-                response = by_repo[context["repository"]]
+                response = {
+                    key: value
+                    for key, value in by_repo[context["repository"]].items()
+                    if key in {"repository", "is_ai", "ai_relevance_evidence", "ai_core_purpose"}
+                }
                 _validate_relevance(response, context)
                 classifications[context["repository"]] = response
                 if cache_store:
@@ -190,6 +194,8 @@ def analyze_live_snapshot(
                     )
         except Exception as exc:
             errors.append(f"classification failed: {exc}")
+    if classifications and all(value.get("relevance_error") for value in classifications.values()):
+        errors.append("all relevance evidence is unreliable; classification incomplete")
     complete = len(classifications) == len(entries) and not errors
     eligible = []
     if complete:
@@ -307,11 +313,18 @@ def _validate_relevance(response: dict, context: dict) -> None:
     require("is_ai" in response, "missing relevance verdict")
     evidence = response.get("ai_relevance_evidence")
     require(isinstance(evidence, str), "missing relevance evidence")
-    if verdict is not None:
-        require(
-            bool(evidence.strip()) and any(evidence in context[key] for key in ("description", "readme")),
-            "relevance evidence is not a provided source quote",
+    if verdict is not None and not (
+        evidence.strip() and any(evidence in context[key] for key in ("description", "readme"))
+    ):
+        # An explicit but unsupported verdict is uncertainty about this candidate,
+        # not permission to quote invented text or discard valid batch peers.
+        response.update(
+            is_ai=None,
+            ai_relevance_evidence="",
+            ai_core_purpose=None,
+            relevance_error="relevance evidence is not a provided source quote",
         )
+        return
 
     if verdict is True:
         # These claims describe compatibility or how software was developed, not

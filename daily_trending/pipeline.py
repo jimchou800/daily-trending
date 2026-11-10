@@ -89,6 +89,8 @@ def run_live_pipeline(
         if store:
             period_calls = store.state.get("calls_used", 0)
             client.restore_usage(period_calls, monthly_usage["estimated_spend_cny"])
+            client.accounting_blocked = bool(monthly_usage.get("accounting_blocked"))
+            client.usage_records = list(monthly_usage.get("usage_records", []))
 
             def reserve_with_state() -> None:
                 original_reserve()
@@ -100,28 +102,17 @@ def run_live_pipeline(
                 )
 
             client._reserve_call = reserve_with_state
-        analysis = store.load_compatible("analyzer", snapshot["snapshot_id"], client.config.model) if store else None
-        if analysis is None:
-            analysis = analyze_live_snapshot(
-                snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store
-            )
-            if store and analysis["stage"]["status"] == "succeeded":
-                analysis["model"] = client.config.model
-                store.save("analyzer", analysis)
+        successful_history = history if history is not None else load_published_history(history_root) if history_root else []
+        analysis = analyze_live_snapshot(
+            snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store,
+            history=successful_history, releases_by_repository=releases_by_repository,
+        )
+        if store and analysis["stage"]["status"] == "succeeded":
+            analysis["model"] = client.config.model
+            store.save("analyzer", analysis)
         analyzer_path = output_dir / "analyzer.json"
         analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        successful_history = (
-            history if history is not None else load_published_history(history_root) if history_root else []
-        )
-        release_evidence = (
-            releases_by_repository if releases_by_repository is not None else analysis.get("release_evidence", {})
-        )
-        analysis["analyses"], decisions = filter_repeat_entries(
-            analysis["analyses"], issue_date, successful_history, releases_by_repository=release_evidence
-        )
-        (output_dir / "selection.json").write_text(
-            json.dumps(decisions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        (output_dir / "selection.json").write_text(json.dumps(analysis["selection"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         report = organize_report(analysis)
         report_path, html_path = write_report(report, output_dir)
         if store:
@@ -133,3 +124,5 @@ def run_live_pipeline(
         raise
     finally:
         client._reserve_call = original_reserve
+        if store:
+            store.update_accounting(getattr(client, "accounting_blocked", False), getattr(client, "usage_records", []))

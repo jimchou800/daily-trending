@@ -1,3 +1,4 @@
+from tests.model_stub import classification_response
 import json
 import tempfile
 import unittest
@@ -44,6 +45,8 @@ class Issue4RecoveryTests(unittest.TestCase):
 
             def transport(payload, _key):
                 calls.append(payload)
+                if "classifications" in payload["messages"][0]["content"].split("\n", 1)[0]:
+                    return classification_response(payload, is_ai=True, evidence="README")
                 repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
                 return {
                     "choices": [

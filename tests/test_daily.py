@@ -1,3 +1,4 @@
+from tests.model_stub import classification_response
 """Daily orchestration integration tests with only external sources replaced."""
 
 import json
@@ -17,8 +18,7 @@ class DailyTests(unittest.TestCase):
 
         def transport(payload, _key):
             calls.append(payload)
-            repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
-            return {"choices": [{"message": {"content": json.dumps({"repository": repository, "is_ai": False})}}]}
+            return classification_response(payload)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -34,9 +34,9 @@ class DailyTests(unittest.TestCase):
             self.assertEqual(json.loads(saved)["status"], "published")
             self.assertEqual(json.loads(saved)["published_at"], "2026-11-10T00:00:00+00:00")
             self.assertNotIn("样本预览", path.with_name("index.html").read_text(encoding="utf-8"))
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(calls), 1)
             self.assertEqual(run_daily(root / "site", root / "state", **options), path)
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(calls), 1)
             self.assertEqual(path.read_bytes(), saved)
 
     def test_expired_daily_run_makes_no_external_calls(self):

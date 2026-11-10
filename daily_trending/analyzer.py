@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .contracts import CONTRACT_VERSION, require, require_github_url, validate_common_artifact
-from .dashscope import DashScopeClient, build_analysis_prompt
+from .dashscope import DashScopeClient, BudgetExceeded
+from .analysis_prompts import relevance_context, relevance_batches, detail_prompt
+from .selection import filter_repeat_entries
 from .github_sources import load_github_sources
 from .persistence import ArtifactStore
 
@@ -119,101 +121,129 @@ def analyze_live_snapshot(
     *,
     expected_period: str | None = None,
     cache_store: ArtifactStore | None = None,
+    history: list[dict] | None = None,
+    releases_by_repository: dict[str, list[dict]] | None = None,
 ) -> dict:
-    """Analyze each collected repository through DashScope in source order.
+    """Classify all candidates, apply repeat eligibility, then analyze up to five successes.
 
-    A candidate failure is recorded and does not prevent later candidates from
-    being attempted. If no candidate produces a reliable analysis, the stage
-    remains failed rather than becoming a false zero-project result.
+    Sources and validated model output are cached by snapshot/model/schema. Missing
+    classifications are incomplete work, never a verified empty selection.
     """
     validate_common_artifact(snapshot, "collector")
     if expected_period is not None and snapshot["period_id"] != expected_period:
         raise ValueError("period does not match requested run")
     entries = snapshot["snapshot"].get("entries")
     require(isinstance(entries, list), "snapshot entries are missing")
-    analyses: list[dict] = []
-    errors: list[str] = []
-    release_evidence: dict[str, list[dict]] = {}
-    completed = False
-    analysis_failure = False
+    analyses, errors, decisions = [], [], []
+    release_evidence, sources, classifications = {}, {}, {}
+    model, sid = client.config.model, snapshot["snapshot_id"]
+    pending = []
     for entry in entries:
+        repo = entry["repository"]
         try:
-            if cache_store:
-                cached = cache_store.load_analysis(entry["repository"], snapshot["snapshot_id"], client.config.model)
-                if cached is not None:
-                    analyses.append(_validated_entry(snapshot, entry, cached))
-                    cached_sources = source_loader(entry) if source_loader else load_github_sources(entry)
-                    releases = cached_sources.get("releases", []) if isinstance(cached_sources, dict) else []
-                    release_evidence[entry["repository"]] = [
-                        release
-                        for release in releases
-                        if isinstance(release, dict)
-                        and release.get("draft") is False
-                        and release.get("prerelease") is False
-                    ]
-                    completed = True
-                    continue
-            source = source_loader(entry) if source_loader else load_github_sources(entry)
-            releases = source.get("releases", []) if isinstance(source, dict) else []
-            release_evidence[entry["repository"]] = [
-                release
-                for release in releases
-                if isinstance(release, dict) and release.get("draft") is False and release.get("prerelease") is False
-            ]
-            prompt_entry = dict(entry)
-            prompt_entry["github_sources"] = source
-            raw = client.complete(build_analysis_prompt([prompt_entry]))
-            decoded = json.loads(raw)
-            responses = (
-                decoded.get("analyses")
-                if isinstance(decoded, dict) and isinstance(decoded.get("analyses"), list)
-                else [decoded]
-            )
-            if not isinstance(decoded, dict) or not isinstance(responses, list):
-                raise ValueError("model analyses are not an object")
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as response_file:
-                json.dump({"snapshot_id": snapshot["snapshot_id"], "analyses": responses}, response_file)
-                response_path = Path(response_file.name)
+            source = cache_store.load_analysis("source:" + repo, sid, model) if cache_store else None
+            if source is None:
+                source = source_loader(entry) if source_loader else load_github_sources(entry)
+                require(isinstance(source, dict), "invalid GitHub sources")
+                source = dict(source, repository="source:" + repo)
+                if cache_store:
+                    cache_store.save_analysis("source:" + repo, sid, model, source)
+            sources[repo] = source
+            release_evidence[repo] = [r for r in source.get("releases", []) if isinstance(r, dict) and r.get("draft") is False and r.get("prerelease") is False]
+            context = relevance_context(entry, source)
+            cached = cache_store.load_analysis("relevance:" + repo, sid, model) if cache_store else None
+            if cached is not None:
+                cached = dict(cached, repository=repo)
+                _validate_relevance(cached, context)
+                classifications[repo] = cached
+            else:
+                pending.append(context)
+        except Exception as exc:
+            errors.append(f"source/classification failed for {repo}: {exc}")
+    for batch, prompt in relevance_batches(pending):
+        try:
+            decoded = json.loads(client.complete(prompt))
+            responses = decoded.get("classifications")
+            require(isinstance(responses, list), "missing classifications")
+            expected = {c["repository"] for c in batch}
+            require(len(responses) == len(expected), "incomplete classifications")
+            require(all(isinstance(r, dict) for r in responses), "invalid classifications")
+            require({r.get("repository") for r in responses} == expected, "classification repositories mismatch")
+            by_repo = {r["repository"]: r for r in responses}
+            for context in batch:
+                response = by_repo[context["repository"]]
+                _validate_relevance(response, context)
+                classifications[context["repository"]] = response
+                if cache_store:
+                    cache_store.save_analysis("relevance:" + context["repository"], sid, model, dict(response, repository="relevance:" + context["repository"]))
+        except Exception as exc:
+            errors.append(f"classification failed: {exc}")
+    complete = len(classifications) == len(entries) and not errors
+    eligible = []
+    if complete:
+        candidates = []
+        for entry in entries:
+            relevance = classifications[entry["repository"]]
+            if relevance["is_ai"] is True:
+                candidates.append(entry)
+            else:
+                decisions.append({"repository": entry["repository"], "eligible": False, "reason": "not_ai" if relevance["is_ai"] is False else "unknown_relevance", "evidence": relevance["ai_relevance_evidence"]})
+        eligible, repeat_decisions = filter_repeat_entries(candidates, snapshot["period_id"], history or [], releases_by_repository=releases_by_repository if releases_by_repository is not None else release_evidence, limit=len(candidates))
+        decisions.extend(repeat_decisions)
+        for entry in eligible:
+            if len(analyses) >= 5:
+                break
+            repo = entry["repository"]
             try:
-                candidate_snapshot = dict(snapshot)
-                candidate_snapshot["snapshot"] = dict(snapshot["snapshot"], entries=[entry])
-                result = analyze_snapshot(candidate_snapshot, response_path, expected_period=expected_period)
-            finally:
-                response_path.unlink(missing_ok=True)
-            completed = result["stage"]["status"] == "succeeded"
-            analysis_failure = analysis_failure or not completed
-            analyses.extend(result["analyses"])
-            if cache_store and result["analyses"]:
-                cached_response = next(
-                    (
-                        item
-                        for item in responses
-                        if isinstance(item, dict) and item.get("repository") == entry["repository"]
-                    ),
-                    None,
-                )
-                if cached_response is not None:
-                    cache_store.save_analysis(
-                        entry["repository"], snapshot["snapshot_id"], client.config.model, cached_response
-                    )
-            errors.extend(result["stage"]["errors"])
-        except Exception as exc:  # isolated candidate failure by contract
-            errors.append(f"analysis failed for {entry['repository']}: {exc}")
-    status = "succeeded" if analyses or (completed and not analysis_failure and not errors) else "failed"
+                response = cache_store.load_analysis(repo, sid, model) if cache_store else None
+                if response is None:
+                    decoded = json.loads(client.complete(detail_prompt(entry, sources[repo])))
+                    responses = decoded.get("analyses", [decoded])
+                    require(isinstance(responses, list) and len(responses) == 1, "invalid detail response")
+                    response = responses[0]
+                require(isinstance(response, dict) and response.get("repository") == repo, "detail repository mismatch")
+                require(response.get("is_ai") is True, "detail did not confirm AI")
+                response = dict(response, ai_relevance_evidence=classifications[repo]["ai_relevance_evidence"])
+                analysis = _validated_entry(snapshot, entry, response)
+                allowed = {entry["repository_url"], entry["repository_url"] + "#readme", entry["repository_url"] + "/blob/HEAD/README.md"}
+                allowed.update(r.get("html_url") for r in release_evidence[repo])
+                require(all(url in allowed for url in analysis["sources"]), "detail cites unprovided source")
+                for key in ("repeat_basis", "repeat_change", "previous_report_url"):
+                    if key in entry:
+                        analysis[key] = entry[key]
+                analyses.append(analysis)
+                if cache_store:
+                    cache_store.save_analysis(repo, sid, model, response)
+            except (BudgetExceeded, TimeoutError) as exc:
+                errors.append(str(exc))
+                complete = False
+                break
+            except Exception as exc:
+                errors.append(f"analysis failed for {repo}: {exc}")
+    status = "succeeded" if complete and (analyses or not eligible) else "failed"
     source = snapshot["snapshot"]
     return {
         "contract_version": CONTRACT_VERSION,
         "period_id": snapshot["period_id"],
-        "snapshot_id": snapshot["snapshot_id"],
+        "snapshot_id": sid,
+        "analysis_schema": "2",
         "stage": {"name": "analyzer", "status": status, "errors": errors},
-        "snapshot": {
-            "source_url": source["source_url"],
-            "scope": source["scope"],
-            "collected_at": source["collected_at"],
-        },
+        "snapshot": {key: source[key] for key in ("source_url", "scope", "collected_at")},
         "analyses": analyses,
         "release_evidence": release_evidence,
+        "selection": sorted(decisions, key=lambda d: next(i for i, e in enumerate(entries) if e["repository"] == d["repository"])),
+        "classifications": list(classifications.values()),
     }
+
+
+def _validate_relevance(response: dict, context: dict) -> None:
+    verdict = response.get("is_ai")
+    require(verdict is None or type(verdict) is bool, "invalid relevance verdict")
+    require("is_ai" in response, "missing relevance verdict")
+    evidence = response.get("ai_relevance_evidence")
+    require(isinstance(evidence, str), "missing relevance evidence")
+    if verdict is not None:
+        require(bool(evidence.strip()) and any(evidence in context[key] for key in ("description", "readme")), "relevance evidence is not a provided source quote")
 
 
 def _validated_entry(snapshot: dict, entry: dict, response: dict) -> dict:
@@ -224,7 +254,8 @@ def _validated_entry(snapshot: dict, entry: dict, response: dict) -> dict:
         json.dump({"snapshot_id": snapshot["snapshot_id"], "analyses": [response]}, handle)
         path = Path(handle.name)
     try:
-        result = analyze_snapshot(snapshot, path, expected_period=snapshot["period_id"])
+        candidate = dict(snapshot, snapshot=dict(snapshot["snapshot"], entries=[entry]))
+        result = analyze_snapshot(candidate, path, expected_period=snapshot["period_id"])
     finally:
         path.unlink(missing_ok=True)
     if not result["analyses"]:

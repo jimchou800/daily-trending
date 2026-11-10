@@ -1,3 +1,4 @@
+from tests.model_stub import classification_response
 """Failures between publication writes must not become successful or backfilled issues."""
 
 import json
@@ -71,8 +72,7 @@ class PublicationRecoveryTests(unittest.TestCase):
 
             def transport(payload, _key):
                 calls.append(payload)
-                repo = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]
-                return {"choices": [{"message": {"content": json.dumps({"repository": repo, "is_ai": False})}}]}
+                return classification_response(payload)
 
             options = dict(
                 clock=lambda: datetime(2026, 11, 10, 8, tzinfo=BEIJING),
@@ -102,7 +102,7 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(publisher.load_successful_history(root / "site")[0]["published_at"], stamp)
             self.assertIn(stamp, path.with_name("index.html").read_text(encoding="utf-8"))
             self.assertIn(stamp, (root / "site/index.html").read_text(encoding="utf-8"))
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(calls), 1)
             self.assertEqual(options["client"].estimated_spend_cny, spent)
 
     def test_lost_artifact_subtree_fails_before_new_day_collection(self):
@@ -111,22 +111,7 @@ class PublicationRecoveryTests(unittest.TestCase):
             client = DashScopeClient(
                 api_key="test",
                 config=DashScopeConfig(max_retries=0),
-                transport=lambda payload, _: {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps(
-                                    {
-                                        "repository": json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[
-                                            0
-                                        ]["repository"],
-                                        "is_ai": False,
-                                    }
-                                )
-                            }
-                        }
-                    ]
-                },
+                transport=lambda payload, _: classification_response(payload),
             )
             run_daily(
                 root / "site",
@@ -197,22 +182,7 @@ class PublicationRecoveryTests(unittest.TestCase):
             client = DashScopeClient(
                 api_key="test",
                 config=DashScopeConfig(max_retries=0),
-                transport=lambda payload, _: {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps(
-                                    {
-                                        "repository": json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[
-                                            0
-                                        ]["repository"],
-                                        "is_ai": False,
-                                    }
-                                )
-                            }
-                        }
-                    ]
-                },
+                transport=lambda payload, _: classification_response(payload),
             )
             run_daily(
                 root / "site",

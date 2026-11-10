@@ -26,3 +26,21 @@ jobs:
           name: production-coverage
           path: coverage.json
           if-no-files-found: error
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Install pinned hosted authority tools
+        working-directory: worker
+        run: npm ci
+      - name: Verify hosted authority independently
+        working-directory: worker
+        run: npm run check
+      - name: Preserve hosted authority coverage report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-authority-coverage
+          path: worker/coverage
+          if-no-files-found: error

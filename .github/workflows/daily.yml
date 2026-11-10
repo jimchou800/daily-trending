@@ -23,6 +23,7 @@ jobs:
           python-version: '3.12'
       - name: Generate and commit through the durable authority
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           AI_DASHSCOPE_API_KEY: ${{ secrets.AI_DASHSCOPE_API_KEY }}
           PUBLICATION_BASE_URL: ${{ vars.PUBLICATION_BASE_URL }}
           PUBLICATION_AUTOMATION_TOKEN: ${{ secrets.PUBLICATION_AUTOMATION_TOKEN }}

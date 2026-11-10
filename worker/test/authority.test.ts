@@ -251,6 +251,106 @@ async function prepare(selection?: Record<string, unknown>) {
   return fence;
 }
 describe("atomic report publication", () => {
+  it("publishes only the bound one-off report after cutoff with truthful time and successful inclusion history", async () => {
+    await prepare();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T04:00:00Z"));
+    const lateReport = { ...report, collected_at: "2026-11-10T02:05:00Z" };
+    const hash = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(JSON.stringify(lateReport)),
+        ),
+      ),
+      (v) => v.toString(16).padStart(2, "0"),
+    ).join("");
+    env.MAINTENANCE_PUBLICATION_TOKEN = "one-off-secret";
+    env.MAINTENANCE_PUBLICATION_DATE = "2026-11-10";
+    env.MAINTENANCE_REPORT_HASH = hash;
+    const stub = env.PUBLICATION_AUTHORITY.get(
+      env.PUBLICATION_AUTHORITY.idFromName(env.PUBLICATION_OBJECT_NAME),
+    );
+    await runInDurableObject<PublicationAuthority, void>(
+      stub,
+      async (instance) => {
+        // Test-only access configures the already-created DO instance's bindings.
+        Object.assign((instance as unknown as { env: Env }).env, {
+          MAINTENANCE_PUBLICATION_TOKEN: "one-off-secret",
+          MAINTENANCE_PUBLICATION_DATE: "2026-11-10",
+          MAINTENANCE_REPORT_HASH: hash,
+        });
+      },
+    );
+    const state = (await (
+      await call("state?period=2026-11-10", undefined, "GET")
+    ).json()) as { artifacts: { selection: unknown } };
+    const body = {
+      period: "2026-11-10",
+      report: lateReport,
+      snapshot: { ...snapshot, collected_at: lateReport.collected_at },
+      selection: state.artifacts.selection,
+    };
+    const send = () =>
+      SELF.fetch("https://example.com/_automation/maintenance-publish", {
+        method: "POST",
+        headers: { ...headers, "X-Maintenance-Token": "one-off-secret" },
+        body: JSON.stringify(body),
+      });
+    expect(
+      (
+        await SELF.fetch(
+          "https://example.com/_automation/maintenance-publish",
+          { method: "POST", headers, body: JSON.stringify(body) },
+        )
+      ).status,
+    ).toBe(403);
+    body.report = { ...lateReport, scope: "altered" };
+    expect((await send()).status).toBe(409);
+    body.report = lateReport;
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-11T04:00:00Z"));
+    expect((await send()).status).toBe(409);
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T04:00:00Z"));
+    const correctSelection = body.selection;
+    body.selection = { completed: false };
+    expect((await send()).status).toBe(400);
+    body.selection = correctSelection;
+    await runInDurableObject<PublicationAuthority, void>(
+      stub,
+      async (_instance, storageState) => {
+        const sync = storageState.storage.sync.bind(storageState.storage);
+        let writes = 0;
+        vi.spyOn(storageState.storage, "sync").mockImplementation(async () => {
+          await sync();
+          if (++writes === 2)
+            vi.spyOn(Date, "now").mockReturnValue(
+              Date.parse("2026-11-10T16:00:00Z"),
+            );
+        });
+      },
+    );
+    expect((await send()).status).toBe(409);
+    expect(
+      await (await call("state?period=2026-11-10", undefined, "GET")).json(),
+    ).toMatchObject({ history: [], publication: null });
+    vi.restoreAllMocks();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T04:00:00Z"));
+    const response = await send();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      report: {
+        published_at: "2026-11-10T04:00:00.000Z",
+        maintenance_publication: { report_hash: hash },
+      },
+      idempotent: false,
+    });
+    expect(await (await send()).json()).toMatchObject({ idempotent: true });
+    expect(await (await SELF.fetch("https://example.com/")).text()).toContain(
+      "应维护者要求补发，未满足09:00准点发布",
+    );
+    expect(
+      await (await call("state?period=2026-11-10", undefined, "GET")).json(),
+    ).toMatchObject({ history: [{ report_date: "2026-11-10" }] });
+  });
   it("durably records a locally stopped monetary call only when authoritative remaining funds cannot cover its bounded estimate", async () => {
     const fence = await prepare();
     const args = {

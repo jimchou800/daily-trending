@@ -10,7 +10,7 @@ export const HOME_STATUS_SCRIPT = `(() => {
     const cutoff = Date.parse(day + "T01:00:00Z");
     status.hidden = !(now >= cutoff &&
       (status.dataset.reportDate !== day ||
-       !(Date.parse(status.dataset.publishedAt) < cutoff)));
+       (!(Date.parse(status.dataset.publishedAt) < cutoff) && status.dataset.maintenanceDate !== day)));
     budget.hidden = budget.dataset.exhaustedMonth !== day.slice(0, 7);
     return Math.min(60000, now < cutoff ? cutoff - now : Infinity,
       Date.parse(day + "T16:00:00Z") - now);

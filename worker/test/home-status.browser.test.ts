@@ -39,9 +39,13 @@ function browser(
   reportDate = "",
   publishedAt = "",
   exhaustedMonth = "",
+  maintenanceDate = "",
 ) {
   let now = Date.parse(at);
-  const failure = { hidden: true, dataset: { reportDate, publishedAt } };
+  const failure = {
+    hidden: true,
+    dataset: { reportDate, publishedAt, maintenanceDate },
+  };
   const budget = { hidden: false, dataset: { exhaustedMonth } };
   const listeners = new Map<string, () => void>();
   const timers: { callback: () => void; delay: number }[] = [];
@@ -94,6 +98,19 @@ function browser(
 describe.each([false, true])(
   "executed public homepage script (instrumented: %s)",
   (instrument) => {
+    it("keeps a truthful maintenance issue separate from missing today while reevaluating the next day", () => {
+      const page = browser(
+        "2026-11-10T04:00:00Z",
+        "2026-11-10",
+        "2026-11-10T03:00:00Z",
+        "",
+        "2026-11-10",
+      );
+      expect(page.failure.hidden).toBe(true);
+      page.move("2026-11-11T01:00:00Z");
+      page.timers[0].callback();
+      expect(page.failure.hidden).toBe(false);
+    });
     beforeEach(() => {
       instrumentScript = instrument;
     });

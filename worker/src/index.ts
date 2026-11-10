@@ -14,6 +14,9 @@ export interface Env {
   PUBLICATION_INSTALLATION_ID: string;
   PUBLICATION_OBJECT_NAME: string;
   PUBLICATION_BOOTSTRAP_TOKEN?: string;
+  MAINTENANCE_PUBLICATION_TOKEN?: string;
+  MAINTENANCE_PUBLICATION_DATE?: string;
+  MAINTENANCE_REPORT_HASH?: string;
 }
 type RecordValue = Record<string, unknown>;
 interface Reservation {
@@ -129,7 +132,11 @@ function github(value: unknown): string {
 function metric(value: unknown): number | null {
   return value === null ? null : integer(value);
 }
-function snapshotValid(value: unknown, period: string): RecordValue {
+function snapshotValid(
+  value: unknown,
+  period: string,
+  maintenance = false,
+): RecordValue {
   const snap = object(value);
   need(
     snap.complete === true &&
@@ -139,7 +146,7 @@ function snapshotValid(value: unknown, period: string): RecordValue {
   const collected = timestamp(snap.collected_at);
   need(
     new Date(collected + 8 * 3600000).toISOString().slice(0, 10) === period &&
-      collected < deadline(period) &&
+      (maintenance || collected < deadline(period)) &&
       collected <= Date.now(),
     "snapshot_time",
   );
@@ -195,6 +202,8 @@ function render(report: RecordValue): string {
       escape(report.correction_note) +
       "</p>";
   const entries = list(report.entries);
+  if (report.maintenance_publication)
+    content += '<p role="status">应维护者要求补发，未满足09:00准点发布</p>';
   if (!entries.length)
     content += "<p>今日无符合收录条件的项目。已完成完整榜单筛选。</p>";
   for (const value of entries) {
@@ -402,9 +411,14 @@ export class PublicationAuthority extends DurableObject<Env> {
     period: string,
     p: Period,
     correction = false,
+    maintenance = false,
   ): RecordValue {
     const report = object(value),
-      snapshot = snapshotValid(p.artifacts.snapshot, period);
+      snapshot = snapshotValid(p.artifacts.snapshot, period, maintenance);
+    need(
+      maintenance || correction || !report.maintenance_publication,
+      "maintenance_input",
+    );
     need(
       report.contract_version === "1.0" &&
         report.report_date === period &&
@@ -580,8 +594,13 @@ export class PublicationAuthority extends DurableObject<Env> {
     period: string,
     report: RecordValue,
     correction = false,
+    maintenance = false,
   ): Promise<Response> {
-    if (!correction) before(period, 5000);
+    const checkAdmission = () => {
+      if (maintenance) need(period === today(), "maintenance_date", 409);
+      else if (!correction) before(period, 5000);
+    };
+    checkAdmission();
     const previous = this.read<Issue>("issue:" + period),
       head = this.read<string>("head");
     need(
@@ -597,12 +616,18 @@ export class PublicationAuthority extends DurableObject<Env> {
       });
     const canonical = {
       ...report,
+      ...(correction && this.issueReport(period)?.maintenance_publication
+        ? {
+            maintenance_publication:
+              this.issueReport(period)!.maintenance_publication,
+          }
+        : {}),
       status: REPORT_STATUS.PUBLISHED,
       published_at:
         previous?.published_at ?? new Date(Date.now()).toISOString(),
     };
     const hash = await this.blob(canonical);
-    if (!correction) before(period, 5000);
+    checkAdmission();
     const intent: Intent = {
       period,
       head,
@@ -611,7 +636,7 @@ export class PublicationAuthority extends DurableObject<Env> {
     };
     this.write("intent", intent);
     await this.ctx.storage.sync();
-    if (!correction) before(period, 5000);
+    checkAdmission();
     this.ctx.storage.transactionSync(() => {
       this.write("issue:" + period, {
         hash,
@@ -623,14 +648,20 @@ export class PublicationAuthority extends DurableObject<Env> {
       }
     });
     await this.ctx.storage.sync();
-    if (!correction && (period !== today() || Date.now() >= deadline(period))) {
+    if (
+      !correction &&
+      (period !== today() || (!maintenance && Date.now() >= deadline(period)))
+    ) {
       this.ctx.storage.transactionSync(() => this.rollback(intent));
       await this.ctx.storage.sync();
       throw new Fault(409, "deadline_crossed");
     }
     this.remove("intent");
     await this.ctx.storage.sync();
-    if (!correction && (period !== today() || Date.now() >= deadline(period))) {
+    if (
+      !correction &&
+      (period !== today() || (!maintenance && Date.now() >= deadline(period)))
+    ) {
       this.ctx.storage.transactionSync(() => this.rollback(intent));
       await this.ctx.storage.sync();
       throw new Fault(409, "deadline_crossed");
@@ -723,12 +754,13 @@ export class PublicationAuthority extends DurableObject<Env> {
               Date.now() >= deadline(today()) &&
               (!report ||
                 report.report_date !== today() ||
-                timestamp(report.published_at) >= deadline(today()));
+                (timestamp(report.published_at) >= deadline(today()) &&
+                  !report.maintenance_publication));
             const month = today().slice(0, 7);
             const exhausted =
               this.read<Month>("month:" + month)?.generation_exhausted === true;
             content =
-              `<p id="today-status" role="status" data-report-date="${escape(report?.report_date ?? "")}" data-published-at="${escape(report?.published_at ?? "")}"${missing ? "" : " hidden"}>今日日报生成失败</p>` +
+              `<p id="today-status" role="status" data-maintenance-date="${report?.maintenance_publication ? escape(report.report_date) : ""}" data-report-date="${escape(report?.report_date ?? "")}" data-published-at="${escape(report?.published_at ?? "")}"${missing ? "" : " hidden"}>今日日报生成失败</p>` +
               `<p id="month-status" role="status" data-exhausted-month="${exhausted ? month : ""}"${exhausted ? "" : " hidden"}>当月生成额度已用尽</p>` +
               content +
               '<script src="/home-status.js" defer></script>';
@@ -760,6 +792,79 @@ export class PublicationAuthority extends DurableObject<Env> {
         }
         const period = date(b.period ?? url.searchParams.get("period")),
           p = this.period(period);
+        if (route === "/_automation/maintenance-publish") {
+          need(
+            request.method === "POST" &&
+              this.env.MAINTENANCE_PUBLICATION_TOKEN &&
+              request.headers.get("X-Maintenance-Token") ===
+                this.env.MAINTENANCE_PUBLICATION_TOKEN,
+            "maintenance_disabled",
+            403,
+          );
+          need(
+            period === "2026-11-10" &&
+              period === today() &&
+              period === this.env.MAINTENANCE_PUBLICATION_DATE,
+            "maintenance_date",
+            409,
+          );
+          const report = object(b.report);
+          const reportBytes = new TextEncoder().encode(json(report));
+          need(reportBytes.length <= 512 * 1024, "report_size", 413);
+          const hash = Array.from(
+            new Uint8Array(await crypto.subtle.digest("SHA-256", reportBytes)),
+            (v) => v.toString(16).padStart(2, "0"),
+          ).join("");
+          need(
+            hash === this.env.MAINTENANCE_REPORT_HASH,
+            "maintenance_hash",
+            409,
+          );
+          const previous = this.issueReport(period);
+          if (previous) {
+            need(
+              object(previous.maintenance_publication).report_hash === hash,
+              "already_published",
+              409,
+            );
+            return Response.json({
+              report: previous,
+              url: `/archive/${period}/`,
+              idempotent: true,
+            });
+          }
+          need(
+            !report.maintenance_publication && report.published_at === null,
+            "maintenance_input",
+          );
+          const candidate = {
+            ...p,
+            artifacts: {
+              ...p.artifacts,
+              snapshot: b.snapshot,
+              selection: b.selection,
+            },
+          };
+          this.validateReport(report, period, candidate, false, true);
+          const registry = this.read<Registry>("registry")!;
+          if (!registry.periods.includes(period)) registry.periods.push(period);
+          this.ctx.storage.transactionSync(() => {
+            this.write("period:" + period, candidate);
+            this.write("registry", registry);
+          });
+          return await this.publish(
+            period,
+            {
+              ...report,
+              maintenance_publication: {
+                report_hash: hash,
+                note: "应维护者要求补发，未满足09:00准点发布",
+              },
+            },
+            false,
+            true,
+          );
+        }
         if (route === "/_automation/state" && request.method === "GET")
           return Response.json({
             period,
@@ -870,7 +975,13 @@ export class PublicationAuthority extends DurableObject<Env> {
             "correction_selection",
             409,
           );
-          const corrected = this.validateReport(candidate, period, p, true);
+          const corrected = this.validateReport(
+            candidate,
+            period,
+            p,
+            true,
+            Boolean(original.maintenance_publication),
+          );
           return await this.publish(
             period,
             {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -111,16 +112,30 @@ class ArtifactStore:
             self.state.setdefault("failures", []).append(failure_reason)
         self._write_state()
 
-    def update_usage(self, calls_used: int, estimated_spend_cny: float) -> None:
-        """Persist period and calendar-month model usage for budget continuity."""
+    def update_usage(
+        self,
+        calls_used: int,
+        estimated_spend_cny: float,
+        *,
+        monthly_calls_used: int | None = None,
+        period_spend_cny: float | None = None,
+    ) -> None:
+        """Reserve monthly usage before period state; a failed second write stays charged.
+
+        Calls are period-scoped unless the separate monthly total is supplied.
+        Spend is the monthly total, with a separate period total when available.
+        The caller must serialize updates across all report dates.
+        """
         self.state["calls_used"] = calls_used
-        self.state["estimated_spend_cny"] = estimated_spend_cny
-        self._write_state()
+        self.state["estimated_spend_cny"] = estimated_spend_cny if period_spend_cny is None else period_spend_cny
         monthly_path = self.root / f"monthly-{self.directory.name[:7]}.json"
         temporary = monthly_path.with_suffix(".tmp")
         temporary.write_text(
             json.dumps(
-                {"calls_used": calls_used, "estimated_spend_cny": estimated_spend_cny},
+                {
+                    "calls_used": calls_used if monthly_calls_used is None else monthly_calls_used,
+                    "estimated_spend_cny": estimated_spend_cny,
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -128,18 +143,29 @@ class ArtifactStore:
             encoding="utf-8",
         )
         os.replace(temporary, monthly_path)
+        self._write_state()
 
     def monthly_usage(self) -> dict[str, float | int]:
         """Return cumulative model usage for this report's calendar month."""
         path = self.root / f"monthly-{self.directory.name[:7]}.json"
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            calls_used = int(data.get("calls_used", 0))
-            spend = float(data.get("estimated_spend_cny", 0.0))
-            if calls_used < 0 or spend < 0:
-                raise ValueError("negative monthly usage")
+            if not isinstance(data, dict):
+                raise ValueError("monthly usage must be an object")
+            calls_used = data.get("calls_used")
+            spend = data.get("estimated_spend_cny")
+            if (
+                type(calls_used) is not int
+                or calls_used < 0
+                or type(spend) not in (int, float)
+                or not math.isfinite(spend)
+                or spend < 0
+            ):
+                raise ValueError("invalid monthly usage")
             return {"calls_used": calls_used, "estimated_spend_cny": spend}
         except FileNotFoundError:
+            if any(self.root.glob(f"{self.directory.name[:7]}-*/run-state.json")):
+                raise ValueError("monthly usage ledger is missing for existing run state")
             return {"calls_used": 0, "estimated_spend_cny": 0.0}
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("monthly usage ledger is corrupt") from exc

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -41,16 +42,24 @@ class DashScopeClient:
         *,
         config: DashScopeConfig | None = None,
         transport: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
+        before_call: Callable[[], None] | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("AI_DASHSCOPE_API_KEY")
         self.config = config or DashScopeConfig()
         self.transport = transport or self._http_transport
+        self.before_call = before_call
         self.calls_used = 0
         self.estimated_spend_cny = 0.0
 
     def restore_usage(self, calls_used: int, estimated_spend_cny: float) -> None:
-        """Restore durable usage before a resumed run can make another request."""
-        if calls_used < 0 or estimated_spend_cny < 0:
+        """Restore this period's calls and cumulative monthly spend before requests."""
+        if (
+            type(calls_used) is not int
+            or calls_used < 0
+            or type(estimated_spend_cny) not in (int, float)
+            or not math.isfinite(estimated_spend_cny)
+            or estimated_spend_cny < 0
+        ):
             raise ValueError("invalid persisted model usage")
         self.calls_used = calls_used
         self.estimated_spend_cny = estimated_spend_cny
@@ -72,6 +81,8 @@ class DashScopeClient:
         }
         last_error: Exception | None = None
         for _attempt in range(self.config.max_retries + 1):
+            if self.before_call is not None:
+                self.before_call()
             self._reserve_call()
             try:
                 response = self.transport(payload, self.api_key)

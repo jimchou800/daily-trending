@@ -66,8 +66,17 @@ def run_live_pipeline(
 ) -> PipelineResult:
     """Collect the live Daily snapshot, analyze it, and write a preview artifact."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    original_reserve = client._reserve_call
     store = ArtifactStore(artifact_root, issue_date) if artifact_root else None
     if store:
+        monthly_usage = store.monthly_usage()
+        period_spend = store.state.get("estimated_spend_cny", 0.0)
+        store.update_usage(
+            store.state.get("calls_used", 0),
+            monthly_usage["estimated_spend_cny"],
+            monthly_calls_used=monthly_usage["calls_used"],
+            period_spend_cny=period_spend,
+        )
         store.begin_run()
     try:
         snapshot = store.load_compatible("collector") if store else None
@@ -78,13 +87,17 @@ def run_live_pipeline(
         collector_path = output_dir / "collector.json"
         collector_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if store:
-            monthly_usage = store.monthly_usage()
-            client.restore_usage(monthly_usage["calls_used"], monthly_usage["estimated_spend_cny"])
-            original_reserve = client._reserve_call
+            period_calls = store.state.get("calls_used", 0)
+            client.restore_usage(period_calls, monthly_usage["estimated_spend_cny"])
 
             def reserve_with_state() -> None:
                 original_reserve()
-                store.update_usage(client.calls_used, client.estimated_spend_cny)
+                store.update_usage(
+                    client.calls_used,
+                    client.estimated_spend_cny,
+                    monthly_calls_used=monthly_usage["calls_used"] + client.calls_used - period_calls,
+                    period_spend_cny=period_spend + client.estimated_spend_cny - monthly_usage["estimated_spend_cny"],
+                )
 
             client._reserve_call = reserve_with_state
         analysis = store.load_compatible("analyzer", snapshot["snapshot_id"], client.config.model) if store else None
@@ -118,3 +131,5 @@ def run_live_pipeline(
         if store:
             store.finish_run("failed", str(exc))
         raise
+    finally:
+        client._reserve_call = original_reserve

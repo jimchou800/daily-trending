@@ -8,6 +8,7 @@ Primary sources:
 - Model limits: https://help.aliyun.com/zh/model-studio/text-generation-model
 - Request parameters: https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions
 - Regional endpoints: https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope
+- Runner billing: https://docs.github.com/en/billing/concepts/product-billing/github-actions
 
 The Beijing `qwen3.8-max` standard list price is CNY 12 per million input tokens and CNY 36 per million output tokens, including reasoning and answer. No free allowance, cache discount, Batch discount, or currency conversion is assumed. The default Beijing endpoint uses these rates. Other models, regions, deployment modes and future price changes require fresh tariff verification before use; preserving a custom remote model identifier is not price validation.
 
@@ -42,5 +43,7 @@ A bounded normal issue can use one full-ranking relevance request with at most 8
 | 31-day model total | 186 | | | 26.827152 |
 
 This leaves CNY 3.172848 for other monthly services or extra calls, assuming selected static hosting and scheduling have zero daily-service fees. It proves arithmetic feasibility only under those bounds. The analyzer must actually enforce these complete-prompt limits while preserving the complete ranking; truncating the ranking to meet the bound is not allowed. A larger ranking or unavailable reliable analysis must fail within budget, not silently omit candidates. The quality/adequacy of these prompt and output bounds needs sample and eventual live validation.
+
+The repository was verified PUBLIC on 2026-11-10, and the schedule selects the standard `ubuntu-latest` runner. GitHub's billing documentation states standard GitHub-hosted runners in public repositories remain free; larger runners do not share this rule. The generation workflow uploads no Actions artifacts or cache and enables no paid runner. This establishes the selected compute price, not timely cron delivery. CI coverage artifacts still count against account storage allowances and need separate monitoring.
 
 Failure retries are excluded from the normal baseline. Every extra attempt reserves its actual request-specific amount, successful work is reused, and both per-run call limits and the shared CNY 30 monthly cap apply. Two complete six-call attempts beyond the baseline would cost up to CNY 2.596176 for that issue; sustained failures can exhaust the month and must stop further paid calls. This is not a claim of 31 successful issues under repeated failures. Actual other service charges must reduce the model allowance; no free-tier assumption may replace that accounting. The 09:00 deadline and next-month recovery remain separate required checks.

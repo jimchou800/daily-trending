@@ -102,17 +102,26 @@ def run_live_pipeline(
                 )
 
             client._reserve_call = reserve_with_state
-        successful_history = history if history is not None else load_published_history(history_root) if history_root else []
+        successful_history = (
+            history if history is not None else load_published_history(history_root) if history_root else []
+        )
         analysis = analyze_live_snapshot(
-            snapshot, client, source_loader=source_loader, expected_period=issue_date, cache_store=store,
-            history=successful_history, releases_by_repository=releases_by_repository,
+            snapshot,
+            client,
+            source_loader=source_loader,
+            expected_period=issue_date,
+            cache_store=store,
+            history=successful_history,
+            releases_by_repository=releases_by_repository,
         )
         if store and analysis["stage"]["status"] == "succeeded":
             analysis["model"] = client.config.model
             store.save("analyzer", analysis)
         analyzer_path = output_dir / "analyzer.json"
         analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        (output_dir / "selection.json").write_text(json.dumps(analysis["selection"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (output_dir / "selection.json").write_text(
+            json.dumps(analysis["selection"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         report = organize_report(analysis)
         report_path, html_path = write_report(report, output_dir)
         if store:

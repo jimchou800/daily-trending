@@ -1,5 +1,6 @@
-from tests.model_stub import classification_response
 """Daily orchestration integration tests with only external sources replaced."""
+
+from tests.model_stub import classification_response
 
 import json
 import tempfile

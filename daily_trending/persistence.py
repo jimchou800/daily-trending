@@ -170,6 +170,27 @@ class ArtifactStore:
                 or spend < 0
             ):
                 raise ValueError("invalid monthly usage")
+            if type(data.get("accounting_blocked", False)) is not bool:
+                raise ValueError("invalid accounting block")
+            records = data.get("usage_records", [])
+            if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+                raise ValueError("invalid usage records")
+            allowed_fields = {
+                "reserved_cost_cny",
+                "usage_status",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "actual_cost_cny",
+            }
+            for record in records:
+                if set(record) - allowed_fields or record.get("usage_status") not in ("unavailable", "reported"):
+                    raise ValueError("invalid usage record fields")
+                for key, value in record.items():
+                    if key != "usage_status" and (
+                        type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                    ):
+                        raise ValueError("invalid usage record value")
             result = {"calls_used": calls_used, "estimated_spend_cny": spend}
             if data.get("accounting_blocked"):
                 result["accounting_blocked"] = True

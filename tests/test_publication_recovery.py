@@ -1,5 +1,6 @@
-from tests.model_stub import classification_response
 """Failures between publication writes must not become successful or backfilled issues."""
+
+from tests.model_stub import classification_response
 
 import json
 import shutil

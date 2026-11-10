@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -149,7 +148,11 @@ def analyze_live_snapshot(
                 if cache_store:
                     cache_store.save_analysis("source:" + repo, sid, model, source)
             sources[repo] = source
-            release_evidence[repo] = [r for r in source.get("releases", []) if isinstance(r, dict) and r.get("draft") is False and r.get("prerelease") is False]
+            release_evidence[repo] = [
+                r
+                for r in source.get("releases", [])
+                if isinstance(r, dict) and r.get("draft") is False and r.get("prerelease") is False
+            ]
             context = relevance_context(entry, source)
             cached = cache_store.load_analysis("relevance:" + repo, sid, model) if cache_store else None
             if cached is not None:
@@ -175,7 +178,12 @@ def analyze_live_snapshot(
                 _validate_relevance(response, context)
                 classifications[context["repository"]] = response
                 if cache_store:
-                    cache_store.save_analysis("relevance:" + context["repository"], sid, model, dict(response, repository="relevance:" + context["repository"]))
+                    cache_store.save_analysis(
+                        "relevance:" + context["repository"],
+                        sid,
+                        model,
+                        dict(response, repository="relevance:" + context["repository"]),
+                    )
         except Exception as exc:
             errors.append(f"classification failed: {exc}")
     complete = len(classifications) == len(entries) and not errors
@@ -187,8 +195,21 @@ def analyze_live_snapshot(
             if relevance["is_ai"] is True:
                 candidates.append(entry)
             else:
-                decisions.append({"repository": entry["repository"], "eligible": False, "reason": "not_ai" if relevance["is_ai"] is False else "unknown_relevance", "evidence": relevance["ai_relevance_evidence"]})
-        eligible, repeat_decisions = filter_repeat_entries(candidates, snapshot["period_id"], history or [], releases_by_repository=releases_by_repository if releases_by_repository is not None else release_evidence, limit=len(candidates))
+                decisions.append(
+                    {
+                        "repository": entry["repository"],
+                        "eligible": False,
+                        "reason": "not_ai" if relevance["is_ai"] is False else "unknown_relevance",
+                        "evidence": relevance["ai_relevance_evidence"],
+                    }
+                )
+        eligible, repeat_decisions = filter_repeat_entries(
+            candidates,
+            snapshot["period_id"],
+            history or [],
+            releases_by_repository=releases_by_repository if releases_by_repository is not None else release_evidence,
+            limit=len(candidates),
+        )
         decisions.extend(repeat_decisions)
         for entry in eligible:
             if len(analyses) >= 5:
@@ -205,7 +226,11 @@ def analyze_live_snapshot(
                 require(response.get("is_ai") is True, "detail did not confirm AI")
                 response = dict(response, ai_relevance_evidence=classifications[repo]["ai_relevance_evidence"])
                 analysis = _validated_entry(snapshot, entry, response)
-                allowed = {entry["repository_url"], entry["repository_url"] + "#readme", entry["repository_url"] + "/blob/HEAD/README.md"}
+                allowed = {
+                    entry["repository_url"],
+                    entry["repository_url"] + "#readme",
+                    entry["repository_url"] + "/blob/HEAD/README.md",
+                }
                 allowed.update(r.get("html_url") for r in release_evidence[repo])
                 require(all(url in allowed for url in analysis["sources"]), "detail cites unprovided source")
                 for key in ("repeat_basis", "repeat_change", "previous_report_url"):
@@ -231,7 +256,9 @@ def analyze_live_snapshot(
         "snapshot": {key: source[key] for key in ("source_url", "scope", "collected_at")},
         "analyses": analyses,
         "release_evidence": release_evidence,
-        "selection": sorted(decisions, key=lambda d: next(i for i, e in enumerate(entries) if e["repository"] == d["repository"])),
+        "selection": sorted(
+            decisions, key=lambda d: next(i for i, e in enumerate(entries) if e["repository"] == d["repository"])
+        ),
         "classifications": list(classifications.values()),
     }
 
@@ -243,7 +270,10 @@ def _validate_relevance(response: dict, context: dict) -> None:
     evidence = response.get("ai_relevance_evidence")
     require(isinstance(evidence, str), "missing relevance evidence")
     if verdict is not None:
-        require(bool(evidence.strip()) and any(evidence in context[key] for key in ("description", "readme")), "relevance evidence is not a provided source quote")
+        require(
+            bool(evidence.strip()) and any(evidence in context[key] for key in ("description", "readme")),
+            "relevance evidence is not a provided source quote",
+        )
 
 
 def _validated_entry(snapshot: dict, entry: dict, response: dict) -> dict:

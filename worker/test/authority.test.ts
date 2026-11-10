@@ -251,6 +251,73 @@ async function prepare(selection?: Record<string, unknown>) {
   return fence;
 }
 describe("atomic report publication", () => {
+  it("durably records a locally stopped monetary call only when authoritative remaining funds cannot cover its bounded estimate", async () => {
+    const fence = await prepare();
+    const args = {
+      period: "2026-11-10",
+      fence,
+      input_tokens: 100,
+      output_tokens: 100,
+      limit_micros: 30_000_000,
+    };
+    expect(await (await call("budget-notice", args)).json()).toEqual({
+      generation_exhausted: false,
+    });
+    await call("reserve", { ...args, key: "large", amount_micros: 29_999_900 });
+    await call("usage", {
+      period: args.period,
+      key: "large",
+      actual_micros: 4800,
+    });
+    expect(
+      await (
+        await call("budget-notice", { ...args, output_tokens: 8001 })
+      ).json(),
+    ).toEqual({ error: "invalid_request" });
+    expect(await (await call("budget-notice", args)).json()).toEqual({
+      generation_exhausted: true,
+    });
+    const state = await (
+      await call("state?period=2026-11-10", undefined, "GET")
+    ).json();
+    expect(state).toMatchObject({
+      month: { reserved_micros: 29_999_900, generation_exhausted: true },
+    });
+    expect(await (await SELF.fetch("https://example.com/")).text()).toContain(
+      'data-exhausted-month="2026-11"',
+    );
+  });
+  it.each([
+    { accounting_blocked: true, pending: [], error: "accounting_blocked" },
+    {
+      accounting_blocked: false,
+      pending: ["unsettled"],
+      error: "accounting_pending",
+    },
+  ])(
+    "does not reinterpret unresolved accounting as a monthly budget notice: $error",
+    async ({ error, ...blockers }) => {
+      const fence = await prepare();
+      await storeRecord("month:2026-11", {
+        reserved_micros: 29_999_999,
+        ...blockers,
+      });
+      expect(
+        await (
+          await call("budget-notice", {
+            period: "2026-11-10",
+            fence,
+            input_tokens: 1,
+            output_tokens: 1,
+            limit_micros: 30_000_000,
+          })
+        ).json(),
+      ).toEqual({ error });
+      expect(
+        await (await SELF.fetch("https://example.com/")).text(),
+      ).not.toContain('data-exhausted-month="2026-11"');
+    },
+  );
   it("serves a homepage-only static status script without exposing private state", async () => {
     await prepare();
     const home = await SELF.fetch("https://example.com/");

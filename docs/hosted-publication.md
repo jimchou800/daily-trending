@@ -16,6 +16,8 @@ The homepage includes a same-origin static `/home-status.js` resource allowed by
 
 A rejected reservation whose conservative cost would exceed the monthly cap durably records `generation_exhausted` on that month. Only that recorded condition shows the homepage's “当月生成额度已用尽” hint; accounting uncertainty/pending usage alone does not imply exhaustion. Existing reservations, billing bounds and admission checks are unchanged. The next month's homepage does not inherit this hint, and public reads remain available despite exhausted or accounting-blocked generation budgets.
 
+The hosted runner also handles monetary rejections by the Python client's earlier local guard: it sends authenticated `budget-notice` with the pending input/output token estimates and configured monthly limit, before the unchanged local guard stops the call. The Worker bounds those token estimates exactly as for reservations, recomputes the tariff, and latches only when its own durable month total plus that estimate exceeds the configured limit (at most CNY30). The notice neither creates a reservation nor changes spend or grants dispatch. Accounting/pending failures and per-run call limits do not send a monetary notice; an affordable or stale caller estimate cannot establish exhaustion on its own.
+
 ## Installation and bindings
 
 `worker/wrangler.json` declares `new_sqlite_classes` and the `PUBLICATION_AUTHORITY` binding. Do not change the namespace identity or pinned `PUBLICATION_OBJECT_NAME` across deployments. Set a unique persistent `PUBLICATION_INSTALLATION_ID`; the checked-in replacement value cannot initialize a production ledger. Set `PUBLICATION_AUTOMATION_TOKEN` as a secret, never a checked-in variable. A new installation additionally needs a temporary independent `PUBLICATION_BOOTSTRAP_TOKEN`. An authenticated POST to `/_automation/install` with `{ "bootstrap_token": "..." }` initializes only empty storage. Remove that bootstrap secret immediately afterwards. Missing/mismatched identity, missing registered period/month records, missing report blobs and corrupt JSON fail closed; an existing installation never silently initializes new accounting state.
@@ -30,6 +32,7 @@ Every automation request requires `Authorization: Bearer <PUBLICATION_AUTOMATION
 | --- | --- | --- |
 | POST `install` | `bootstrap_token` | `{installed:true}`, explicit one-time new installation |
 | POST `begin` | `period`, `run_id` | `{period,run_id,fence,attempts}`; same run id idempotent, at most three distinct attempts total per date |
+| POST `budget-notice` | `period`, `fence`, `input_tokens`, `output_tokens`, `limit_micros` | `{generation_exhausted}`; validate durable monetary shortage without reserving, billing or dispatching |
 | GET `state?period=D` | no body | `{period,attempts,fence,artifacts,reservations,month,history,publication}`; history contains original successful inclusion reports; publication is current corrected report or null |
 | POST `reserve` | `period,fence,key,amount_micros,input_tokens,output_tokens` | `{dispatch,reservation}`; first response permits one transport, duplicate returns `dispatch:false` |
 | POST `usage` | `period,key,actual_micros,usage_status?,accounting_blocked?` | `{accounting_blocked}`; same amount/status idempotent, conflicting re-accounting rejected; allowed after deadline/stale fence |

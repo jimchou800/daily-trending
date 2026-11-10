@@ -75,6 +75,8 @@ class DashScopeClient:
         self.calls_used = 0
         self.estimated_spend_cny = 0.0
         self.pending_call_cost_cny = 0.0
+        self.pending_input_tokens = 0
+        self.pending_output_tokens = 0
         self.accounting_blocked = False
         self.usage_records: list[dict[str, Any]] = []
         self._require_usage = transport is None
@@ -102,6 +104,8 @@ class DashScopeClient:
             raise ModelCallError("model input exceeds configured limit")
         input_estimate = len(source_text.encode("utf-8")) + CHAT_INPUT_OVERHEAD
         output_estimate = self.config.max_output_tokens + OUTPUT_TOKEN_TOLERANCE
+        self.pending_input_tokens = input_estimate
+        self.pending_output_tokens = output_estimate
         self.pending_call_cost_cny = max(
             self.config.estimated_call_cost_cny,
             (input_estimate * INPUT_CNY_PER_MILLION + output_estimate * OUTPUT_CNY_PER_MILLION) / 1_000_000,

@@ -61,6 +61,13 @@ class AuthorityHTTP:
             self.data["reservations"][body["key"]] = copy.deepcopy(body)
             self.data["month"]["reserved_micros"] += body["amount_micros"]
             return {"dispatch": True, "reservation": body}
+        if op == "budget-notice":
+            month = self.data["month"]
+            amount = body["input_tokens"] * 12 + body["output_tokens"] * 36
+            exhausted = month["reserved_micros"] + amount > body["limit_micros"]
+            if exhausted:
+                month["generation_exhausted"] = True
+            return {"generation_exhausted": exhausted}
         if op == "usage":
             self.data["reservations"][body["key"]]["actual_micros"] = body["actual_micros"]
             self.data["month"]["accounting_blocked"] |= body["accounting_blocked"]
@@ -294,6 +301,27 @@ class HostedTests(unittest.TestCase):
 
 
 class HostedRunnerTests(unittest.TestCase):
+    def test_local_monthly_stop_durably_reports_exhaustion_without_dispatch_or_charging(self):
+        http = AuthorityHTTP()
+        http.data["month"]["reserved_micros"] = 29_990_000
+        with TemporaryDirectory() as directory, self.assertRaises(RuntimeError):
+            self.run_job(http, directory)
+        self.assertTrue(http.data["month"].get("generation_exhausted"))
+        self.assertEqual(http.data["reservations"], {})
+        self.assertEqual(http.data["month"]["reserved_micros"], 29_990_000)
+        self.assertFalse(any(path.endswith("reserve") for _, path, _ in http.calls))
+
+    def test_call_limit_and_accounting_stops_do_not_report_monthly_exhaustion(self):
+        for blocked, max_calls in ((False, 0), (True, 40)):
+            with self.subTest(blocked=blocked, max_calls=max_calls):
+                http = AuthorityHTTP()
+                http.data["month"].update(reserved_micros=29_990_000, accounting_blocked=blocked)
+                with TemporaryDirectory() as directory, self.assertRaises(RuntimeError):
+                    self.run_job(http, directory, config=DashScopeConfig(max_calls=max_calls, max_retries=0))
+                self.assertFalse(http.data["month"].get("generation_exhausted"))
+                self.assertFalse(any(path.endswith("budget-notice") for _, path, _ in http.calls))
+                self.assertEqual(http.data["reservations"], {})
+
     def test_transient_initial_state_and_store_initialization_recover(self):
         for failed_state in (1, 2):
             with self.subTest(failed_state=failed_state):
@@ -353,7 +381,9 @@ class HostedRunnerTests(unittest.TestCase):
 
     def run_job(self, http, directory, **kwargs):
         client = DashScopeClient(
-            api_key="private-model-key", transport=paid_response, config=DashScopeConfig(max_retries=0)
+            api_key="private-model-key",
+            transport=paid_response,
+            config=kwargs.pop("config", DashScopeConfig(max_retries=0)),
         )
         return run_hosted_daily(
             authority(http),

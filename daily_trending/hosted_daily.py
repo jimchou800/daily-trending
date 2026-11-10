@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import tempfile
@@ -87,6 +88,25 @@ def run_hosted_daily(
                 check_deadline()
                 if original_guard:
                     original_guard()
+                # The local monetary guard runs before the remote transport.
+                # Notify only for that exact guard, never for accounting or
+                # per-period call limits. The authority rechecks its durable
+                # month total; this notice grants no dispatch and charges zero.
+                if (
+                    not client.accounting_blocked
+                    and client.calls_used < client.config.max_calls
+                    and client.estimated_spend_cny + client.pending_call_cost_cny > client.config.monthly_budget_cny
+                ):
+                    authority.call(
+                        "budget-notice",
+                        {
+                            "period": period,
+                            "fence": fence,
+                            "input_tokens": client.pending_input_tokens,
+                            "output_tokens": client.pending_output_tokens,
+                            "limit_micros": math.floor(client.config.monthly_budget_cny * 1_000_000),
+                        },
+                    )
 
             client.before_call = guard
             try:

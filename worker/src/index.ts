@@ -891,6 +891,22 @@ export class PublicationAuthority extends DurableObject<Env> {
             idempotent: true,
           });
         this.fence(period, p, b);
+        if (route === "/_automation/budget-notice") {
+          const input = integer(b.input_tokens, 1, 32000),
+            output = integer(b.output_tokens, 1, 8000),
+            limit = integer(b.limit_micros, 0, 30_000_000),
+            month = this.month(period);
+          need(!month.accounting_blocked, "accounting_blocked", 409);
+          need(month.pending.length === 0, "accounting_pending", 409);
+          const exhausted =
+            month.reserved_micros + input * 12 + output * 36 > limit;
+          if (exhausted) {
+            month.generation_exhausted = true;
+            this.write("month:" + period.slice(0, 7), month);
+            await this.ctx.storage.sync();
+          }
+          return Response.json({ generation_exhausted: exhausted });
+        }
         if (route === "/_automation/stage") {
           const report = this.validateReport(b.report, period, p);
           const hash = await this.blob(report);

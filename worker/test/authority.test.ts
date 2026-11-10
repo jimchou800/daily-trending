@@ -800,6 +800,8 @@ describe("cutoff, crash recovery and ledger integrity", () => {
       await (await SELF.fetch("https://example.com/archive/")).text(),
     ).not.toContain("今日日报生成失败");
   });
+  // Forty real SQLite reservation/settlement durability cycles can exceed the
+  // default five seconds on Windows under filesystem load; retain every cycle.
   it("limits calls even with cheap settled transport outcomes", async () => {
     const fence = await prepare();
     for (let i = 0; i < 40; i++) {
@@ -833,7 +835,7 @@ describe("cutoff, crash recovery and ledger integrity", () => {
         })
       ).json(),
     ).toEqual({ error: "call_limit" });
-  });
+  }, 15000);
 });
 async function stageDay(
   period: string,

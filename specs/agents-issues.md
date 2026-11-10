@@ -1,6 +1,6 @@
 # 三 Agent 日报流程 · Issue 交付追踪
 
-状态：用户已确认拆分，8 个 issues 已发布到 jimchou800/daily-trending 的 GitHub Issues，均带 feature 标签，已逐项核验正文与开放状态。I1–I8 对应远端 #1–#8。
+状态：用户已确认拆分，8 个 issues 已发布到 jimchou800/daily-trending 的 GitHub Issues，均带 feature 标签，创建时已逐项核验正文与开放状态。I1–I8 对应远端 #1–#8。
 
 | 草稿编号 | 已发布 issue |
 | --- | --- |
@@ -11,7 +11,7 @@
 | I5 | [#5 完整发布公共日报、归档与成功收录历史](https://github.com/jimchou800/daily-trending/issues/5) |
 | I6 | [#6 自动定时运行，到 09:00 放弃未发布期次并展示缺刊](https://github.com/jimchou800/daily-trending/issues/6) |
 | I7 | [#7 维护者沿原地址更正事实，保留发布时间与收录窗口](https://github.com/jimchou800/daily-trending/issues/7) |
-| I8 | [#8 由发起人连续试读 7 期并核验月度费用](https://github.com/jimchou800/daily-trending/issues/8) |
+| I8 | [#8 发起人确认首版验收，取消连续七期试读门槛](https://github.com/jimchou800/daily-trending/issues/8) |
 
 ## 依据与范围
 

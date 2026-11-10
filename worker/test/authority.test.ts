@@ -702,6 +702,45 @@ async function storeRecord(key: string, value: unknown) {
   );
 }
 describe("cutoff, crash recovery and ledger integrity", () => {
+  it("reports the observed durable completion time consistently after acknowledgement loss", async () => {
+    const fence = await prepare();
+    const { hash } = (await (
+      await call("stage", { period: "2026-11-10", fence, report })
+    ).json()) as { hash: string };
+    const stub = env.PUBLICATION_AUTHORITY.get(
+      env.PUBLICATION_AUTHORITY.idFromName(env.PUBLICATION_OBJECT_NAME),
+    );
+    let count = 0;
+    await runInDurableObject<PublicationAuthority, void>(
+      stub,
+      async (_instance, state) => {
+        const sync = state.storage.sync.bind(state.storage);
+        vi.spyOn(state.storage, "sync").mockImplementation(async () => {
+          await sync();
+          if (++count === 2)
+            vi.spyOn(Date, "now").mockReturnValue(
+              Date.parse("2026-11-10T00:16:00Z"),
+            );
+        });
+      },
+    );
+    const response = await call("publish", {
+      period: "2026-11-10",
+      fence,
+      hash,
+    });
+    expect(await response.json()).toMatchObject({
+      report: { published_at: "2026-11-10T00:16:00.000Z" },
+    });
+    vi.restoreAllMocks();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T01:01:00Z"));
+    expect(
+      await (await call("state?period=2026-11-10", undefined, "GET")).json(),
+    ).toMatchObject({
+      history: [{ published_at: "2026-11-10T00:16:00.000Z" }],
+      publication: { published_at: "2026-11-10T00:16:00.000Z" },
+    });
+  });
   it("rolls back tentative publication when sync crosses the cutoff", async () => {
     const fence = await prepare();
     const { hash } = (await (
@@ -751,6 +790,81 @@ describe("cutoff, crash recovery and ledger integrity", () => {
     expect(await (await SELF.fetch("https://example.com/")).text()).toContain(
       "尚未发布",
     );
+    expect(
+      await (await call("state?period=2026-11-10", undefined, "GET")).json(),
+    ).toMatchObject({ history: [], publication: null });
+  });
+  it("retains a verified receipt across recovery after the cutoff", async () => {
+    const fence = await prepare();
+    const { hash } = (await (
+      await call("stage", { period: "2026-11-10", fence, report })
+    ).json()) as { hash: string };
+    expect(
+      (await call("publish", { period: "2026-11-10", fence, hash })).status,
+    ).toBe(200);
+    const stub = env.PUBLICATION_AUTHORITY.get(
+      env.PUBLICATION_AUTHORITY.idFromName(env.PUBLICATION_OBJECT_NAME),
+    );
+    await runInDurableObject<PublicationAuthority, void>(
+      stub,
+      async (_instance, state) => {
+        const row = state.storage.sql
+          .exec<{
+            value: string;
+          }>("SELECT value FROM records WHERE key=?", "intent")
+          .toArray()[0];
+        expect(row).toBeDefined();
+        const intent = JSON.parse(row.value) as {
+          confirmation: { hash: string; observed_at: number; mode: string };
+        };
+        expect(intent.confirmation).toMatchObject({
+          mode: "daily",
+          observed_at: Date.parse("2026-11-10T00:15:00Z"),
+        });
+        const issue = state.storage.sql
+          .exec<{
+            value: string;
+          }>("SELECT value FROM records WHERE key=?", "issue:2026-11-10")
+          .toArray()[0];
+        expect(intent.confirmation.hash).toBe(
+          (JSON.parse(issue.value) as { hash: string }).hash,
+        );
+      },
+    );
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-11T01:01:00Z"));
+    expect(
+      (await SELF.fetch("https://example.com/archive/2026-11-10/")).status,
+    ).toBe(200);
+    expect(
+      await (await call("state?period=2026-11-10", undefined, "GET")).json(),
+    ).toMatchObject({ history: [{ report_date: "2026-11-10" }] });
+  });
+  it.each([
+    {
+      hash: "tentative",
+      observed_at: Date.parse("2026-11-10T01:00:00Z"),
+      mode: "daily",
+    },
+    {
+      hash: "different",
+      observed_at: Date.parse("2026-11-10T00:20:00Z"),
+      mode: "daily",
+    },
+    {
+      hash: "tentative",
+      observed_at: Date.parse("2026-11-09T00:20:00Z"),
+      mode: "daily",
+    },
+  ])("rolls back an unproven recovery receipt: %j", async (confirmation) => {
+    await prepare();
+    await storeRecord("intent", { period: "2026-11-10", confirmation });
+    await storeRecord("head", "2026-11-10");
+    await storeRecord("issue:2026-11-10", {
+      hash: "tentative",
+      published_at: "2026-11-10T00:20:00Z",
+    });
+    await storeRecord("inclusion:2026-11-10", report);
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T01:01:00Z"));
     expect(
       await (await call("state?period=2026-11-10", undefined, "GET")).json(),
     ).toMatchObject({ history: [], publication: null });

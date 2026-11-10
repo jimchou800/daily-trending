@@ -259,6 +259,11 @@ interface Intent {
   head?: string;
   issue?: Issue;
   inclusion?: RecordValue;
+  confirmation?: {
+    hash: string;
+    observed_at: number;
+    mode: "daily" | "correction" | "maintenance";
+  };
 }
 /** Serialized private ledger and public report authority; unavailable until explicit install. */
 export class PublicationAuthority extends DurableObject<Env> {
@@ -394,7 +399,7 @@ export class PublicationAuthority extends DurableObject<Env> {
     if (!issue) return undefined;
     const report = this.read<RecordValue>("blob:" + issue.hash);
     need(report, "missing_blob", 503);
-    return report;
+    return { ...report, published_at: issue.published_at };
   }
   private rollback(intent: Intent): void {
     if (intent.head) this.write("head", intent.head);
@@ -656,7 +661,23 @@ export class PublicationAuthority extends DurableObject<Env> {
       await this.ctx.storage.sync();
       throw new Fault(409, "deadline_crossed");
     }
-    this.remove("intent");
+    intent.confirmation = {
+      hash,
+      observed_at: Date.now(),
+      mode: correction ? "correction" : maintenance ? "maintenance" : "daily",
+    };
+    if (!previous)
+      canonical.published_at = new Date(
+        intent.confirmation.observed_at,
+      ).toISOString();
+    this.ctx.storage.transactionSync(() => {
+      this.write("issue:" + period, {
+        hash,
+        published_at: canonical.published_at,
+      });
+      if (!correction) this.write("inclusion:" + period, canonical);
+      this.write("intent", intent);
+    });
     await this.ctx.storage.sync();
     if (
       !correction &&
@@ -730,7 +751,24 @@ export class PublicationAuthority extends DurableObject<Env> {
         need(this.read<Registry>("registry"), "corrupt_authority", 503);
         const pending = this.read<Intent>("intent");
         if (pending) {
-          this.ctx.storage.transactionSync(() => this.rollback(pending));
+          const receipt = pending.confirmation;
+          const confirmed =
+            receipt &&
+            receipt.hash ===
+              this.read<Issue>("issue:" + pending.period)?.hash &&
+            Number.isFinite(receipt.observed_at) &&
+            receipt.observed_at <= Date.now() &&
+            (receipt.mode === "correction" ||
+              (new Date(receipt.observed_at + 8 * 3600000)
+                .toISOString()
+                .slice(0, 10) === pending.period &&
+                (receipt.mode === "maintenance" ||
+                  (receipt.mode === "daily" &&
+                    receipt.observed_at < deadline(pending.period)))));
+          this.ctx.storage.transactionSync(() => {
+            if (confirmed) this.remove("intent");
+            else this.rollback(pending);
+          });
           await this.ctx.storage.sync();
         }
         if (!route.startsWith("/_automation/")) {

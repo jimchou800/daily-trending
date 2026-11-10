@@ -137,6 +137,7 @@ def analyze_live_snapshot(
     release_evidence, sources, classifications = {}, {}, {}
     model, sid = client.config.model, snapshot["snapshot_id"]
     pending = []
+    failed_details = set()
     for entry in entries:
         repo = entry["repository"]
         try:
@@ -244,8 +245,34 @@ def analyze_live_snapshot(
                 complete = False
                 break
             except Exception as exc:
+                failed_details.add(repo)
                 errors.append(f"analysis failed for {repo}: {exc}")
     status = "succeeded" if complete and (analyses or not eligible) else "failed"
+    by_decision = {decision["repository"]: decision for decision in decisions}
+    selected_repos = {analysis["repository"] for analysis in analyses}
+    proof_decisions = []
+    for entry in entries:
+        repo = entry["repository"]
+        relevance = classifications.get(repo, {})
+        decision = dict(
+            by_decision.get(repo, {"repository": repo, "eligible": False, "reason": "classification_incomplete"})
+        )
+        decision.update(
+            is_ai=relevance.get("is_ai") is True,
+            ai_relevance_evidence=relevance.get("ai_relevance_evidence", ""),
+            releases=release_evidence.get(repo, []),
+        )
+        decision["outcome"] = (
+            "selected" if repo in selected_repos else "analysis_failed" if repo in failed_details else "excluded"
+        )
+        if decision.get("eligible") and decision["outcome"] == "excluded":
+            decision.update(eligible=False, reason="limit_reached")
+        proof_decisions.append(decision)
+    selection_proof = {
+        "completed": complete,
+        "eligible_count": len(analyses) + len(failed_details),
+        "decisions": proof_decisions,
+    }
     source = snapshot["snapshot"]
     return {
         "contract_version": CONTRACT_VERSION,
@@ -260,6 +287,7 @@ def analyze_live_snapshot(
             decisions, key=lambda d: next(i for i, e in enumerate(entries) if e["repository"] == d["repository"])
         ),
         "classifications": list(classifications.values()),
+        "selection_proof": selection_proof,
     }
 
 

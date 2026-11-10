@@ -86,6 +86,10 @@ class EfficientAnalysisTests(unittest.TestCase):
         )
         self.assertEqual(len(self.calls), 6)
         self.assertEqual(len(self.calls[0][1]), 25)
+        self.assertEqual(result["selection_proof"]["eligible_count"], 5)
+        self.assertEqual(len(result["selection_proof"]["decisions"]), 25)
+        self.assertEqual(result["selection_proof"]["decisions"][0]["outcome"], "excluded")
+        self.assertEqual(result["selection_proof"]["decisions"][1]["outcome"], "selected")
 
     def test_failed_detail_continues_to_sixth_eligible_without_reordering(self):
         self.details_failed = {"acme/p0"}

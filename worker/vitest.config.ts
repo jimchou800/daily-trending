@@ -1,6 +1,7 @@
 import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 export default defineWorkersConfig({
   test: {
+    include: ["test/authority.test.ts"],
     poolOptions: {
       workers: {
         isolatedStorage: false,

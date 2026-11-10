@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { HOME_STATUS_SCRIPT } from "./home-status";
 import {
   REPORT_STATUS,
   SELECTION_OUTCOME,
@@ -32,6 +33,7 @@ interface Month {
   reserved_micros: number;
   accounting_blocked: boolean;
   pending: string[];
+  generation_exhausted?: boolean;
 }
 interface Registry {
   periods: string[];
@@ -702,6 +704,14 @@ export class PublicationAuthority extends DurableObject<Env> {
         }
         if (!route.startsWith("/_automation/")) {
           need(request.method === "GET", "method", 405);
+          if (route === "/home-status.js")
+            return new Response(HOME_STATUS_SCRIPT, {
+              headers: {
+                "Content-Type": "text/javascript; charset=utf-8",
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+              },
+            });
           const head = this.read<string>("head");
           let content: string;
           if (route === "/") {
@@ -709,13 +719,19 @@ export class PublicationAuthority extends DurableObject<Env> {
             content = report
               ? render(report)
               : "<h1>AI 开源项目热点日报</h1><p>尚未发布</p>";
-            if (
+            const missing =
               Date.now() >= deadline(today()) &&
               (!report ||
                 report.report_date !== today() ||
-                timestamp(report.published_at) >= deadline(today()))
-            )
-              content = '<p role="status">今日日报生成失败</p>' + content;
+                timestamp(report.published_at) >= deadline(today()));
+            const month = today().slice(0, 7);
+            const exhausted =
+              this.read<Month>("month:" + month)?.generation_exhausted === true;
+            content =
+              `<p id="today-status" role="status" data-report-date="${escape(report?.report_date ?? "")}" data-published-at="${escape(report?.published_at ?? "")}"${missing ? "" : " hidden"}>今日日报生成失败</p>` +
+              `<p id="month-status" role="status" data-exhausted-month="${exhausted ? month : ""}"${exhausted ? "" : " hidden"}>当月生成额度已用尽</p>` +
+              content +
+              '<script src="/home-status.js" defer></script>';
           } else if (route === "/archive/" || route === "/archive") {
             content =
               "<h1>历史归档</h1>" +
@@ -737,7 +753,7 @@ export class PublicationAuthority extends DurableObject<Env> {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-store",
               "Content-Security-Policy":
-                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+                "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
               "X-Content-Type-Options": "nosniff",
             },
           });
@@ -916,11 +932,12 @@ export class PublicationAuthority extends DurableObject<Env> {
           need(!month.accounting_blocked, "accounting_blocked", 409);
           need(month.pending.length === 0, "accounting_pending", 409);
           need(Object.keys(p.reservations).length < 40, "call_limit", 409);
-          need(
-            month.reserved_micros + amount <= 30_000_000,
-            "budget_exhausted",
-            409,
-          );
+          if (month.reserved_micros + amount > 30_000_000) {
+            month.generation_exhausted = true;
+            this.write("month:" + period.slice(0, 7), month);
+            await this.ctx.storage.sync();
+            throw new Fault(409, "budget_exhausted");
+          }
           const reservation = {
             amount_micros: amount,
             input_tokens: input,

@@ -251,6 +251,61 @@ async function prepare(selection?: Record<string, unknown>) {
   return fence;
 }
 describe("atomic report publication", () => {
+  it("serves a homepage-only static status script without exposing private state", async () => {
+    await prepare();
+    const home = await SELF.fetch("https://example.com/");
+    expect(home.headers.get("Content-Security-Policy")).toContain(
+      "script-src 'self'",
+    );
+    expect(await home.text()).toContain(
+      '<script src="/home-status.js" defer></script>',
+    );
+    const script = await SELF.fetch("https://example.com/home-status.js");
+    expect(script.status).toBe(200);
+    expect(script.headers.get("Content-Type")).toContain("javascript");
+    expect(await script.text()).toContain("window.location.reload()");
+    expect(
+      await (await SELF.fetch("https://example.com/archive/")).text(),
+    ).not.toContain("home-status.js");
+  });
+  it("shows a truthful exhausted-month hint after an unaffordable reservation while keeping old issues readable", async () => {
+    const fence = await prepare();
+    const { hash } = (await (
+      await call("stage", { period: "2026-11-10", fence, report })
+    ).json()) as { hash: string };
+    await call("publish", { period: "2026-11-10", fence, hash });
+    const args = {
+      period: "2026-11-10",
+      fence,
+      input_tokens: 1,
+      output_tokens: 1,
+    };
+    await call("reserve", { ...args, key: "large", amount_micros: 29_999_900 });
+    await call("usage", {
+      period: args.period,
+      key: "large",
+      actual_micros: 48,
+    });
+    expect(
+      await (await SELF.fetch("https://example.com/")).text(),
+    ).not.toContain('data-exhausted-month="2026-11"');
+    expect(
+      await (
+        await call("reserve", { ...args, key: "next", amount_micros: 480 })
+      ).json(),
+    ).toEqual({ error: "budget_exhausted" });
+    const home = await (await SELF.fetch("https://example.com/")).text();
+    expect(home).toContain('data-exhausted-month="2026-11"');
+    expect(home).toContain("当月生成额度已用尽");
+    expect(home).toContain("example/alpha");
+    const archive = await SELF.fetch("https://example.com/archive/2026-11-10/");
+    expect(archive.status).toBe(200);
+    expect(await archive.text()).not.toContain("当月生成额度已用尽");
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-12-01T01:00:00Z"));
+    expect(
+      await (await SELF.fetch("https://example.com/")).text(),
+    ).not.toContain('data-exhausted-month="2026-11"');
+  });
   it("accepts the canonical explicit unknown reason text", async () => {
     const fence = await prepare();
     expect(
@@ -458,6 +513,9 @@ describe("atomic report publication", () => {
       ).status,
     ).toBe(409);
     expect((await SELF.fetch("https://example.com/")).status).toBe(200);
+    expect(
+      await (await SELF.fetch("https://example.com/")).text(),
+    ).not.toContain('data-exhausted-month="2026-11"');
   });
 });
 async function storeRecord(key: string, value: unknown) {

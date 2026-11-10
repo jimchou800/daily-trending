@@ -30,9 +30,11 @@ not a downloaded billing invoice. No free allowance or discount is assumed.
 | Same relevance, 120s transport | Empty answer after thinking consumed cap | 822 / 1800 | 0.105900 | 0.074664 |
 | Non-thinking relevance | Answer returned in about 6s; schema validation failed | 773 / 310 | 0.105900 | 0.020436 |
 | Fixed non-thinking prompt, complete saved-live preview | Five entries, six calls | 8610 / 1880 | 0.810708 | 0.171000 |
+| Core-purpose classification | Design system correctly excluded; another synthesized quote rejected | 894 / 494 | 0.114492 | 0.028512 |
+| Core-purpose and quote-recovery preview | Five valid entries, six calls | 8290 / 1900 | 0.811200 | 0.167880 |
 
-Known calculated consumption is CNY0.281580. Including the full unknown request
-reservation gives CNY0.387480 conservatively; reservations for known requests
+Known calculated consumption is CNY0.477972. Including the full unknown request
+reservation gives CNY0.583872 conservatively; reservations for known requests
 also remain unreleased in their test ledgers. These experiments must not be
 reported as a successful complete live pipeline or monthly capacity acceptance.
 The first non-thinking run exposed missing required evidence fields and prompted a
@@ -60,7 +62,15 @@ fetched GitHub source responses, with six new real model calls. Its reserved
 daily envelope projects to CNY25.131948 for 31 identical days; calculated usage
 projects to CNY5.301000. These figures describe this sample, not a guarantee for
 longer lists or retries. Review identified a possible AI-core false positive
-in the generated selection, so successful execution is not factual acceptance.
+in the generated selection, so that first execution was not factual acceptance.
+The subsequent core-purpose preview excluded the generic design system and
+selected Skills, Claude Quickstarts, GBrain, agent-browser and RuView in original
+order. It used CNY0.811200 of conservative reservations, or CNY25.147200 over
+31 identical days; calculated token usage was CNY0.167880, or CNY5.204280 over
+31 identical days. Malformed batches still fail; individual unreliable source
+quotes are excluded conservatively, and wholly unreliable classification fails.
+This is a saved-live-source preview, not an on-time public issue or seven-day
+reader acceptance.
 
 See [cost model](cost-model.md) for the separate conservative normal-day capacity
 calculation. Selection/fact review, deployed quota/timing validation and seven

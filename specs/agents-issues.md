@@ -1,16 +1,27 @@
-# 三 Agent 日报流程 · Issue 拆分草稿
+# 三 Agent 日报流程 · Issue 交付追踪
 
-状态：待确认拆分，尚未发布到 issue tracker。编号 I1–I8 为本地草稿编号，不是真实 issue 编号。
+状态：用户已确认拆分，8 个 issues 已发布到 jimchou800/daily-trending 的 GitHub Issues，均带 feature 标签，创建时已逐项核验正文与开放状态。I1–I8 对应远端 #1–#8。
+
+| 草稿编号 | 已发布 issue |
+| --- | --- |
+| I1 | [#1 用保存样本贯通三阶段，生成可阅读的一期日报](https://github.com/jimchou800/daily-trending/issues/1) |
+| I2 | [#2 从完整实时榜单生成可信日报，并限制模型费用](https://github.com/jimchou800/daily-trending/issues/2) |
+| I3 | [#3 根据成功收录历史筛选本期，并说明再次入选变化](https://github.com/jimchou800/daily-trending/issues/3) |
+| I4 | [#4 上游失败后安全恢复，复用同一期快照与成功分析](https://github.com/jimchou800/daily-trending/issues/4) |
+| I5 | [#5 完整发布公共日报、归档与成功收录历史](https://github.com/jimchou800/daily-trending/issues/5) |
+| I6 | [#6 自动定时运行，到 09:00 放弃未发布期次并展示缺刊](https://github.com/jimchou800/daily-trending/issues/6) |
+| I7 | [#7 维护者沿原地址更正事实，保留发布时间与收录窗口](https://github.com/jimchou800/daily-trending/issues/7) |
+| I8 | [#8 发起人确认首版验收，取消连续七期试读门槛](https://github.com/jimchou800/daily-trending/issues/8) |
 
 ## 依据与范围
 
-- 输入：三 Agent PRD v0.1；产品事实以项目规格 v1.1 为准，质量要求遵守编码规范 v1.0 与 AGENTS.md。
+- 输入：三 Agent PRD v0.1；产品事实以项目规格 v1.2 为准，质量要求遵守编码规范 v1.0 与 AGENTS.md。
 - PRD 没有正式编号的 user stories。下文 US-1–US-5 只是追踪标识，不新增需求。
 - US-1：读者免登录阅读可信的中文 AI 热点日报及历史归档。
 - US-2：运行流程在上游失败时正确停止或降级，不把失败展示为空日报。
 - US-3：三个阶段可靠交接数据，重跑复用同一期的有效成果。
 - US-4：维护者能追踪进度、失败和费用，控制发布时间与预算。
-- US-5：维护者可更正事实，发起人能依据真实记录完成连续试读验收。
+- US-5：维护者可更正事实，发起人已确认阅读满意并接受首版。
 
 ### PRD 开放问题的拟定答案
 
@@ -27,7 +38,7 @@
 - UTC 0:00 等于北京时间 08:00，只能作为待验证的启动候选；以北京时间 09:00 发布硬截止点反推启动安排，不预设平台能保证准点。
 - PRD 的“三维标签”没有定义，不自行发明标签体系；改为规格要求的相关性依据、项目类型和正文等结构字段。
 - PRD 的 MD 产物按现行规格改为 JSON 数据源与公共静态网页，不增加 Markdown 下载或对外 API。
-- 当前目录未发现应用代码，也不是 Git 仓库；未发现 issue tracker 地址及 triage 标签约定。发布前须补齐目标及标签，不虚构父 issue 或 issue 链接。
+- 当前目录未发现应用代码，也不是 Git 仓库；用户已指定远端 git@github.com:jimchou800/daily-trending.git，使用 GitHub Issues 与 feature 标签。不虚构父 issue 或 issue 链接。
 
 ## 全部实现 issue 的共同验收条件
 
@@ -187,9 +198,11 @@ User stories covered：US-5。依据：规格 §5–§6。
 
 - I5。
 
-## I8 · 由发起人连续试读 7 期并核验月度费用
+## I8 · 发起人验收确认（原连续试读门槛已取消）
 
 User stories covered：US-1、US-5。依据：规格 §9。
+
+2026-11-10 决定：发起人明确取消以下历史七期试读要求，确认已阅读且满意。原清单保留为历史，不补造记录；月度预算与技术验证继续按现行规格执行。
 
 ### What to build
 
@@ -209,10 +222,10 @@ User stories covered：US-1、US-5。依据：规格 §9。
 - I6。
 - I7。
 
-## 发布前确认
+## 发布状态
 
-1. 确认 8 个切片的粒度、依赖，以及是否需要合并或继续拆分。
-2. 提供目标 issue tracker／仓库地址和 triage 标签约定；I8 使用需要发起人参与的标签，不标为纯 AFK 就绪。
-3. 确认后按依赖顺序发布，用真实 issue 编号替换本地编号；tracker 支持时建立原生阻塞关系。输入来自文件，没有父 issue，不虚构父项、不改动其他 issue。
+1. 用户已确认 8 个切片的粒度与依赖，指定 GitHub Issues 与 feature 标签；I8 正文明确需要发起人参与，不标为纯 AFK 就绪。
+2. 发起人已通过 GitHub 官方设备流程完成授权；使用 API 按依赖顺序创建 #1–#8，并逐项重新读取核验标题、完整正文、feature 标签和开放状态。未使用 Computer Use，不保存或显示认证秘密。
+3. 远端正文已使用实际 issue 链接表达依赖，发布编号及原生依赖核验结果保存在本地发布记录中。输入来自文件，没有父 issue，不虚构父项、不改动其他 issue。
 
-本草稿是任务设计，不代表代码已实现、检查已通过、服务已部署或连续试读已验收。
+发起人已确认首版阅读满意。实现、检查、合并和部署证据见 docs/；以下历史任务清单不能替代当前 GitHub 状态。

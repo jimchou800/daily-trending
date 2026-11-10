@@ -1,0 +1,36 @@
+{
+  "fixture_source": "GitHub Trending Daily sample captured for development contract tests; repositories and metrics are illustrative and must never be published as a current report.",
+  "complete": true,
+  "entries": [
+    {
+      "rank": 1,
+      "repository": "example/alpha",
+      "repository_url": "https://github.com/example/alpha",
+      "description": "An AI coding assistant",
+      "stars_today": 321,
+      "stars_total": 12000,
+      "readme_url": "https://github.com/example/alpha/blob/main/README.md",
+      "readme_excerpt": "Alpha helps developers review generated code."
+    },
+    {
+      "rank": 2,
+      "repository": "example/not-ai",
+      "repository_url": "https://github.com/example/not-ai",
+      "description": "A fast image optimizer",
+      "stars_today": 81,
+      "stars_total": 4000,
+      "readme_url": "https://github.com/example/not-ai/blob/main/README.md",
+      "readme_excerpt": "Compresses image assets for websites."
+    },
+    {
+      "rank": 3,
+      "repository": "example/beta",
+      "repository_url": "https://github.com/example/beta",
+      "description": "A collection of open-source AI tutorials",
+      "stars_today": null,
+      "stars_total": null,
+      "readme_url": "https://github.com/example/beta/blob/main/README.md",
+      "readme_excerpt": "A curated collection of machine learning tutorials."
+    }
+  ]
+}

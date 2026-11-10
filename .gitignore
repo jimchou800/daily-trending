@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+.worktrees/
+
+# Local verification report (CI uploads its own copy)
+coverage.json

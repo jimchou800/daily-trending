@@ -1,0 +1,38 @@
+{
+  "fixture_source": "Saved analyzer response sample for development contract tests; this is not a live model response or publication data.",
+  "analyses": [
+    {
+      "repository": "example/alpha",
+      "is_ai": true,
+      "ai_relevance_evidence": "README describes code review assistance for generated code.",
+      "project_type": "开发工具",
+      "introduction": "面向代码审查场景的 AI 辅助工具。",
+      "problem_solved": "帮助开发者检查生成代码。",
+      "audience": "使用代码生成工具的开发者。",
+      "characteristics": "围绕代码审查提供辅助建议。",
+      "reason_has_evidence": false,
+      "reason": null,
+      "sources": ["https://github.com/example/alpha/blob/main/README.md"],
+      "stars_today": 999999,
+      "stars_total": 999999
+    },
+    {
+      "repository": "example/not-ai",
+      "is_ai": false,
+      "ai_relevance_evidence": "README describes image compression without AI functionality."
+    },
+    {
+      "repository": "example/beta",
+      "is_ai": true,
+      "ai_relevance_evidence": "README identifies the repository as a machine-learning tutorial collection.",
+      "project_type": "教程与资源合集",
+      "introduction": "整理面向学习者的机器学习教程。",
+      "problem_solved": "降低寻找入门学习材料的成本。",
+      "audience": "希望系统学习机器学习的读者。",
+      "characteristics": "以公开教程资源为主。",
+      "reason_has_evidence": false,
+      "reason": null,
+      "sources": ["https://github.com/example/beta/blob/main/README.md"]
+    }
+  ]
+}

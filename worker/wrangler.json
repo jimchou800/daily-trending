@@ -1,0 +1,17 @@
+{
+  "name": "daily-trending-authority",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-02",
+  "durable_objects": {
+    "bindings": [
+      { "name": "PUBLICATION_AUTHORITY", "class_name": "PublicationAuthority" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PublicationAuthority"] }
+  ],
+  "vars": {
+    "PUBLICATION_INSTALLATION_ID": "REPLACE_WITH_PINNED_INSTALLATION_ID",
+    "PUBLICATION_OBJECT_NAME": "daily-trending-v1"
+  }
+}

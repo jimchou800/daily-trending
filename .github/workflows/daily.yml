@@ -1,0 +1,31 @@
+name: Daily hosted publication
+
+on:
+  schedule:
+    - cron: '15 0 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-hosted-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate and commit through the durable authority
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AI_DASHSCOPE_API_KEY: ${{ secrets.AI_DASHSCOPE_API_KEY }}
+          PUBLICATION_BASE_URL: ${{ vars.PUBLICATION_BASE_URL }}
+          PUBLICATION_AUTOMATION_TOKEN: ${{ secrets.PUBLICATION_AUTOMATION_TOKEN }}
+          PUBLICATION_INSTALLATION_ID: ${{ vars.PUBLICATION_INSTALLATION_ID }}
+        run: python -m daily_trending.hosted_daily

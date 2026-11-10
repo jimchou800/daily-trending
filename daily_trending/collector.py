@@ -21,6 +21,24 @@ from .contracts import (
 )
 
 
+_VOID_TAGS = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
+
+
 class _TrendingParser(HTMLParser):
     """Extract repository cards without depending on a third-party scraper."""
 
@@ -28,14 +46,16 @@ class _TrendingParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.cards: list[dict] = []
         self._card: dict | None = None
-        self._depth = 0
+        self._stack: list[str] = []
         self._capture: str | None = None
         self._buffer: list[str] = []
+        self._capture_depth = 0
         self._link: str | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         if tag == "article" and "Box-row" in (attributes.get("class") or "").split():
+            require(self._card is None, "trending response is not complete")
             self._card = {
                 "href": None,
                 "repository": None,
@@ -47,12 +67,15 @@ class _TrendingParser(HTMLParser):
                 "total_text": "",
                 "today_text": "",
             }
-            self._depth = 1
+            self._stack = ["article"]
             return
         if self._card is None:
             return
-        self._depth += 1
-        self._link = attributes.get("href") if tag == "a" else self._link
+        if tag in _VOID_TAGS:
+            return
+        self._stack.append(tag)
+        if self._capture:
+            return
         if tag == "p":
             self._capture = "description"
             self._buffer = []
@@ -62,9 +85,19 @@ class _TrendingParser(HTMLParser):
         elif tag == "span" and "float-sm-right" in (attributes.get("class") or "").split():
             self._capture = "today"
             self._buffer = []
-        elif tag == "a" and (attributes.get("href") or "").startswith("/"):
-            self._capture = "total" if (attributes.get("href") or "").endswith("/stargazers") else "link"
-            self._buffer = []
+        elif tag == "a":
+            href = attributes.get("href") or ""
+            if "h2" in self._stack:
+                require(re.fullmatch(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", href), "trending repository is invalid")
+                require(self._card["repository"] is None, "trending repository heading is ambiguous")
+                self._link = href
+                self._capture = "link"
+                self._buffer = []
+            elif href == f"{self._card['href']}/stargazers":
+                self._capture = "total"
+                self._buffer = []
+        if self._capture:
+            self._capture_depth = len(self._stack)
 
     def handle_data(self, data: str) -> None:
         if self._card is None:
@@ -76,13 +109,10 @@ class _TrendingParser(HTMLParser):
                 self._buffer.append(clean)
 
     def handle_endtag(self, tag: str) -> None:
-        if self._card is None:
+        if tag in _VOID_TAGS or self._card is None:
             return
-        if self._capture and (
-            (tag == "p" and self._capture == "description")
-            or (tag == "span" and self._capture in ("language", "today"))
-            or (tag == "a" and self._capture in ("link", "total"))
-        ):
+        require(self._stack and self._stack[-1] == tag, "trending response is not complete")
+        if self._capture and len(self._stack) == self._capture_depth:
             value = " ".join(self._buffer).strip()
             if self._capture == "description":
                 self._card["description"] = value
@@ -92,23 +122,22 @@ class _TrendingParser(HTMLParser):
                 self._card["today_text"] = value
             elif self._capture == "total":
                 self._card["total_text"] = value
-            elif self._capture == "link" and self._link and self._link.count("/") == 2 and not self._card["repository"]:
+            elif self._capture == "link":
+                require(self._link and value.replace(" ", "") == self._link[1:], "trending repository is invalid")
                 self._card["href"] = self._link
-                self._card["repository"] = value.replace(" ", "")
+                self._card["repository"] = self._link[1:]
             self._capture = None
             self._buffer = []
         if tag == "article":
-            if self._card["href"]:
-                total_match = re.search(r"([\d,]+)", self._card["total_text"])
-                today_match = re.search(r"([\d,]+)\s+stars?\s+today", self._card["today_text"], re.IGNORECASE)
-                self._card["stars_total"] = int(total_match.group(1).replace(",", "")) if total_match else None
-                self._card["stars_today"] = int(today_match.group(1).replace(",", "")) if today_match else None
-                self.cards.append(self._card)
+            require(self._card["href"], "trending repository is invalid")
+            total_match = re.search(r"([\d,]+)", self._card["total_text"])
+            today_match = re.search(r"([\d,]+)\s+stars?\s+today", self._card["today_text"], re.IGNORECASE)
+            self._card["stars_total"] = int(total_match.group(1).replace(",", "")) if total_match else None
+            self._card["stars_today"] = int(today_match.group(1).replace(",", "")) if today_match else None
+            self.cards.append(self._card)
             self._card = None
             self._capture = None
-            self._depth = 0
-        else:
-            self._depth -= 1
+        self._stack.pop()
 
 
 def parse_trending_html(html: str) -> list[dict]:
@@ -119,6 +148,8 @@ def parse_trending_html(html: str) -> list[dict]:
     """
     parser = _TrendingParser()
     parser.feed(html)
+    parser.close()
+    require(parser._card is None, "trending response is not complete")
     require(parser.cards, "trending response is not complete")
     entries = []
     for rank, card in enumerate(parser.cards, start=1):

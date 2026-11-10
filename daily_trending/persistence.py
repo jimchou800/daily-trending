@@ -14,7 +14,7 @@ from .contracts import CONTRACT_VERSION, require_date
 
 MAX_RETRIES = 2
 ARTIFACT_SCHEMA_VERSION = "1"
-ANALYSIS_SCHEMA_VERSION = "3"
+ANALYSIS_SCHEMA_VERSION = "4"
 
 
 class ArtifactStore:

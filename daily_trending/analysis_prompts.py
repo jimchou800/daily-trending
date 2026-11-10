@@ -13,6 +13,7 @@ RELEVANCE_HEADER = (
     "true时ai_core_purpose选model/application/tool/infrastructure/tutorial/course/resource_collection；否则null。"
     "is_ai只能为true/false/null，证据不足用null；ai_relevance_evidence始终为字符串，"
     "true须摘录明确说明核心AI功能或内容的原文，不能只引AI名称或就绪标签；false也须原文依据；最多80字，null填空字符串。"
+    "摘录必须是description或readme中连续、逐字一致的子串；不得改写、插入省略号、删字或拼接不连续片段。"
     "禁止猜测，不要生成详细介绍。正文已按UTF8字节截断。JSON示例："
     '{"classifications":[{"repository":"owner/ai","is_ai":true,"ai_relevance_evidence":"Build AI agents","ai_core_purpose":"tool"},'
     '{"repository":"owner/other","is_ai":false,"ai_relevance_evidence":"SQL formatter","ai_core_purpose":null},'

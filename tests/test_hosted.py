@@ -127,12 +127,12 @@ class HostedTests(unittest.TestCase):
     def test_remote_previous_prompt_cache_and_analyzer_stage_are_incompatible(self):
         http = AuthorityHTTP()
         for repo in ("source:sample/ui", "relevance:sample/ui", "sample/ui"):
-            http.data["artifacts"][f"analysis:snapshot:{repo}:model:1:1"] = {"repository": repo, "is_ai": True}
+            http.data["artifacts"][f"analysis:snapshot:{repo}:model:2:3"] = {"repository": repo, "is_ai": True}
         http.data["artifacts"]["analyzer"] = {
             "contract_version": "1.0",
             "period_id": PERIOD,
             "snapshot_id": "snapshot",
-            "analysis_schema": "2",
+            "analysis_schema": "3",
             "stage": {"name": "analyzer", "status": "succeeded"},
         }
         store = RemoteArtifactStore(authority(http), PERIOD, 1)

@@ -147,6 +147,69 @@ class EfficientAnalysisTests(unittest.TestCase):
         self.assertEqual(result["analyses"], [])
         self.assertEqual(len(self.calls), 1)
 
+    def test_summarized_quote_excludes_one_candidate_without_discarding_valid_peers(self):
+        self.classification_transform = lambda values: [
+            dict(v, ai_relevance_evidence="Build...AI agents") if index == 1 else v for index, v in enumerate(values)
+        ]
+        result = self.run_analysis(self.snapshot(3))
+        self.assertEqual(result["stage"]["status"], "succeeded")
+        self.assertEqual([a["rank"] for a in result["analyses"]], [1, 3])
+        rejected = result["classifications"][1]
+        self.assertIsNone(rejected["is_ai"])
+        self.assertEqual(rejected["ai_relevance_evidence"], "")
+        self.assertIn("source quote", rejected["relevance_error"])
+        decision = result["selection_proof"]["decisions"][1]
+        self.assertEqual(decision["reason"], "unknown_relevance")
+        self.assertEqual(decision["outcome"], "excluded")
+        self.assertEqual(len(self.calls), 3)
+
+    def test_unreliable_candidate_exclusion_and_valid_peers_survive_cache_restart(self):
+        snapshot = self.snapshot(3)
+        store = ArtifactStore(self.root / "quote-cache", snapshot["period_id"])
+        self.classification_transform = lambda values: [
+            dict(v, ai_relevance_evidence="Build...AI agents") if index == 1 else v for index, v in enumerate(values)
+        ]
+        self.run_analysis(snapshot, cache_store=store)
+        self.calls.clear()
+        result = self.run_analysis(snapshot, cache_store=store, loader=lambda _: self.fail("must reuse sources"))
+        self.assertEqual(result["stage"]["status"], "succeeded")
+        self.assertEqual([a["rank"] for a in result["analyses"]], [1, 3])
+        self.assertIn("source quote", result["classifications"][1]["relevance_error"])
+        self.assertTrue(all("relevance_error" not in a for a in result["analyses"]))
+        self.assertEqual(self.calls, [])
+
+    def test_valid_negative_and_unknown_remain_complete_despite_one_unreliable_verdict(self):
+        self.classification_transform = lambda values: [
+            dict(values[0], ai_relevance_evidence="Build...AI agents"),
+            dict(values[1], is_ai=False, ai_core_purpose=None),
+            dict(values[2], is_ai=None, ai_core_purpose=None, ai_relevance_evidence=""),
+        ]
+        result = self.run_analysis(self.snapshot(3))
+        self.assertEqual(result["stage"]["status"], "succeeded")
+        self.assertTrue(result["selection_proof"]["completed"])
+        self.assertEqual(result["analyses"], [])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_all_unreliable_quotes_are_failure_and_diagnostics_cannot_come_from_model(self):
+        self.classification_transform = lambda values: [
+            dict(v, ai_relevance_evidence="Build...AI agents", relevance_error="model supplied diagnostic")
+            for v in values
+        ]
+        result = self.run_analysis(self.snapshot(2))
+        self.assertEqual(result["stage"]["status"], "failed")
+        self.assertFalse(result["selection_proof"]["completed"])
+        self.assertEqual(result["analyses"], [])
+        self.assertTrue(all("source quote" in v["relevance_error"] for v in result["classifications"]))
+        self.assertIn("all relevance evidence is unreliable", result["stage"]["errors"][0])
+        self.assertEqual(len(self.calls), 1)
+
+        self.classification_transform = lambda values: [
+            dict(v, relevance_error="model supplied diagnostic") for v in values
+        ]
+        result = self.run_analysis(self.snapshot(1))
+        self.assertEqual(result["stage"]["status"], "succeeded")
+        self.assertNotIn("relevance_error", result["classifications"][0])
+
     def test_all_candidates_classified_then_repeat_filter_before_five_details(self):
         snapshot = self.snapshot()
         history = [

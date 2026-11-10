@@ -1,4 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
+import {
+  REPORT_STATUS,
+  SELECTION_OUTCOME,
+  UNKNOWN_RELEVANCE,
+  REPEAT_BASIS,
+  UNKNOWN_REASON,
+  USAGE_STATUS,
+} from "./contracts";
 export interface Env {
   PUBLICATION_AUTHORITY: DurableObjectNamespace<PublicationAuthority>;
   PUBLICATION_AUTOMATION_TOKEN: string;
@@ -12,6 +20,7 @@ interface Reservation {
   input_tokens: number;
   output_tokens: number;
   actual_micros?: number;
+  usage_status?: string;
 }
 interface Period {
   runs: Record<string, number>;
@@ -404,7 +413,9 @@ export class PublicationAuthority extends DurableObject<Env> {
     );
     need(
       typeof report.scope === "string" &&
-        ["sample_preview", "published"].includes(text(report.status)),
+        Object.values(REPORT_STATUS).some(
+          (status) => status === text(report.status),
+        ),
       "report_status",
     );
     const entries = list(report.entries);
@@ -422,19 +433,38 @@ export class PublicationAuthority extends DurableObject<Env> {
     for (let i = 0; i < decisions.length; i++) {
       const d = decisions[i];
       need(
-        d.repository === source[i].repository && typeof d.is_ai === "boolean",
+        d.repository === source[i].repository &&
+          (typeof d.is_ai === "boolean" || d.is_ai === null),
         "selection_order",
       );
-      text(d.ai_relevance_evidence);
+      if (d.is_ai === null) {
+        need(
+          d.outcome === SELECTION_OUTCOME.EXCLUDED &&
+            d.reason === UNKNOWN_RELEVANCE,
+          "unknown_selection",
+        );
+        need(
+          typeof d.ai_relevance_evidence === "string",
+          "missing_relevance_evidence",
+        );
+      } else {
+        need(
+          text(d.ai_relevance_evidence).trim().length > 0,
+          "missing_relevance_evidence",
+        );
+      }
       need(
-        ["selected", "excluded", "analysis_failed"].includes(text(d.outcome)),
+        Object.values(SELECTION_OUTCOME).some(
+          (outcome) => outcome === text(d.outcome),
+        ),
         "selection_outcome",
       );
-      if (d.outcome !== "excluded") {
+      if (d.outcome !== SELECTION_OUTCOME.EXCLUDED) {
         need(d.is_ai === true, "not_ai");
         eligible++;
       }
-      if (d.outcome === "selected") selected.push(text(d.repository));
+      if (d.outcome === SELECTION_OUTCOME.SELECTED)
+        selected.push(text(d.repository));
     }
     need(
       selection.eligible_count === eligible &&
@@ -474,7 +504,11 @@ export class PublicationAuthority extends DurableObject<Env> {
       sources.forEach(github);
       need(typeof e.reason_has_evidence === "boolean", "reason_evidence");
       if (e.reason_has_evidence) text(e.reason);
-      else need(e.reason === null || e.reason === "????????", "unknown_reason");
+      else
+        need(
+          e.reason === null || e.reason === UNKNOWN_REASON,
+          "unknown_reason",
+        );
       const previous = history.find(
         (h) =>
           text(h.report_date) < period &&
@@ -483,8 +517,7 @@ export class PublicationAuthority extends DurableObject<Env> {
       if (previous && !correction) {
         text(e.repeat_change);
         need(
-          e.previous_report_url === `archive/${text(previous.report_date)}/` ||
-            e.previous_report_url === `/archive/${text(previous.report_date)}/`,
+          e.previous_report_url === `/archive/${text(previous.report_date)}/`,
           "previous_link",
         );
         if (
@@ -518,8 +551,8 @@ export class PublicationAuthority extends DurableObject<Env> {
               ),
           );
           need(
-            (doubled && e.repeat_basis === "stars_doubled") ||
-              (release && e.repeat_basis === "new_formal_release"),
+            (doubled && e.repeat_basis === REPEAT_BASIS.STARS_DOUBLED) ||
+              (release && e.repeat_basis === REPEAT_BASIS.FORMAL_RELEASE),
             "recent_duplicate",
           );
         }
@@ -562,7 +595,7 @@ export class PublicationAuthority extends DurableObject<Env> {
       });
     const canonical = {
       ...report,
-      status: "published",
+      status: REPORT_STATUS.PUBLISHED,
       published_at:
         previous?.published_at ?? new Date(Date.now()).toISOString(),
     };
@@ -770,9 +803,23 @@ export class PublicationAuthority extends DurableObject<Env> {
             actual = integer(b.actual_micros),
             reservation = p.reservations[key];
           need(reservation, "missing_reservation", 409);
+          const usageStatus = text(b.usage_status ?? USAGE_STATUS.REPORTED);
+          need(
+            Object.values(USAGE_STATUS).some(
+              (status) => status === usageStatus,
+            ),
+            "usage_status",
+          );
+          need(
+            usageStatus !== USAGE_STATUS.UNAVAILABLE ||
+              actual === reservation.amount_micros,
+            "unknown_usage_bound",
+          );
           need(
             reservation.actual_micros === undefined ||
-              reservation.actual_micros === actual,
+              (reservation.actual_micros === actual &&
+                (reservation.usage_status === undefined ||
+                  reservation.usage_status === usageStatus)),
             "usage_conflict",
             409,
           );
@@ -789,6 +836,7 @@ export class PublicationAuthority extends DurableObject<Env> {
             (id) => id !== period + ":" + key,
           );
           reservation.actual_micros = actual;
+          reservation.usage_status = usageStatus;
           this.write("period:" + period, p);
           this.write("month:" + period.slice(0, 7), month);
           await this.ctx.storage.sync();

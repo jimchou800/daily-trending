@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Stage, Status, UsageStatus
+
 import json
 import math
 import os
@@ -32,7 +34,7 @@ class ArtifactStore:
                 "period_id": self.directory.name,
                 "attempts": 0,
                 "run_count": 0,
-                "status": "pending",
+                "status": Status.PENDING,
                 "failures": [],
                 "estimated_spend_cny": 0.0,
                 "artifact_schema": ARTIFACT_SCHEMA_VERSION,
@@ -58,7 +60,7 @@ class ArtifactStore:
             raise ValueError("artifact identity mismatch")
         if artifact.get("stage", {}).get("name") != stage:
             raise ValueError("artifact stage mismatch")
-        if artifact.get("stage", {}).get("status") != "succeeded":
+        if artifact.get("stage", {}).get("status") != Status.SUCCEEDED:
             raise ValueError("only succeeded artifacts may be cached")
         path = self.directory / f"{stage}.json"
         temporary = path.with_suffix(".tmp")
@@ -76,13 +78,13 @@ class ArtifactStore:
             current = artifact.get("stage", {})
             if artifact.get("contract_version") != CONTRACT_VERSION or artifact.get("period_id") != self.directory.name:
                 return None
-            if current.get("name") != stage or current.get("status") != "succeeded":
+            if current.get("name") != stage or current.get("status") != Status.SUCCEEDED:
                 return None
             if snapshot_id is not None and artifact.get("snapshot_id") != snapshot_id:
                 return None
             if model is not None and artifact.get("model") != model:
                 return None
-            if stage == "analyzer" and artifact.get("analysis_schema") != ANALYSIS_SCHEMA_VERSION:
+            if stage == Stage.ANALYZER and artifact.get("analysis_schema") != ANALYSIS_SCHEMA_VERSION:
                 return None
             return artifact
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
@@ -104,7 +106,7 @@ class ArtifactStore:
         if self.state.get("run_count", 0) >= MAX_RETRIES + 1:
             raise RuntimeError("retry limit exhausted")
         self.state["run_count"] = self.state.get("run_count", 0) + 1
-        self.state["status"] = "running"
+        self.state["status"] = Status.RUNNING
         self._write_state()
 
     def finish_run(self, status: str, failure_reason: str | None = None) -> None:
@@ -184,7 +186,10 @@ class ArtifactStore:
                 "actual_cost_cny",
             }
             for record in records:
-                if set(record) - allowed_fields or record.get("usage_status") not in ("unavailable", "reported"):
+                if set(record) - allowed_fields or record.get("usage_status") not in (
+                    UsageStatus.UNAVAILABLE,
+                    UsageStatus.REPORTED,
+                ):
                     raise ValueError("invalid usage record fields")
                 for key, value in record.items():
                     if key != "usage_status" and (

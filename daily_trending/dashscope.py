@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import UsageStatus
+
 import json
 import math
 import os
@@ -36,6 +38,7 @@ class DashScopeConfig:
     max_retries: int = 2
     monthly_budget_cny: float = 30.0
     estimated_call_cost_cny: float = 0.0
+    request_timeout_seconds: int = 120
 
     def __post_init__(self) -> None:
         """Reject invalid limits before any transport or reservation is possible."""
@@ -46,6 +49,8 @@ class DashScopeConfig:
                 raise ValueError(f"invalid {name}")
         if self.max_output_tokens > 128000 or self.max_retries > 2:
             raise ValueError("output or retry limit exceeds supported maximum")
+        if type(self.request_timeout_seconds) is not int or not 1 <= self.request_timeout_seconds <= 180:
+            raise ValueError("invalid request timeout")
         for name in ("monthly_budget_cny", "estimated_call_cost_cny"):
             value = getattr(self, name)
             if type(value) not in (int, float) or not 0 <= value <= 30 or not math.isfinite(value):
@@ -113,6 +118,10 @@ class DashScopeClient:
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
+        if model == "qwen3.8-max":
+            # Raw compatible HTTP requests use this top-level Model Studio field.
+            # Keep the bounded completion allowance for the actual JSON answer.
+            payload["enable_thinking"] = False
         last_error: Exception | None = None
         for _attempt in range(self.config.max_retries + 1):
             if self.before_call is not None:
@@ -149,7 +158,7 @@ class DashScopeClient:
 
     def _record_usage(self, response: dict[str, Any], input_estimate: int, output_estimate: int) -> None:
         usage = response.get("usage") if isinstance(response, dict) else None
-        record = {"reserved_cost_cny": self.pending_call_cost_cny, "usage_status": "unavailable"}
+        record = {"reserved_cost_cny": self.pending_call_cost_cny, "usage_status": UsageStatus.UNAVAILABLE}
         self.usage_records.append(record)
         if usage is None and not self._require_usage:
             return
@@ -169,7 +178,7 @@ class DashScopeClient:
             raise BudgetExceeded("provider usage inconsistent; accounting blocked")
         actual_cost = (prompt * INPUT_CNY_PER_MILLION + output * OUTPUT_CNY_PER_MILLION) / 1_000_000
         record.update(
-            usage_status="reported",
+            usage_status=UsageStatus.REPORTED,
             prompt_tokens=prompt,
             completion_tokens=output,
             total_tokens=total,
@@ -202,7 +211,7 @@ class DashScopeClient:
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=self.config.request_timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
 
 

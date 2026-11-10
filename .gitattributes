@@ -1,0 +1,2 @@
+# Keep formatter-managed Worker sources identical on Windows and CI.
+worker/** text eol=lf

@@ -55,15 +55,44 @@ class RepeatSelectionTests(unittest.TestCase):
         ]
         releases = {
             "acme/released": [
-                {"tag_name": "v2", "draft": False, "prerelease": False, "published_at": "2026-11-08T00:00:00Z"}
+                {
+                    "tag_name": "v2",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-11-08T00:00:00Z",
+                    "html_url": "https://github.com/acme/released/releases/tag/v2",
+                }
             ]
         }
         selected, decisions = filter_repeat_entries(candidates, "2026-11-08", history, releases_by_repository=releases)
         self.assertEqual([entry["repository"] for entry in selected], ["acme/recent", "acme/released"])
         self.assertEqual(decisions[0]["repeat_basis"], "stars_doubled")
         self.assertEqual(decisions[1]["repeat_basis"], "new_formal_release")
-        self.assertEqual(selected[0]["previous_report_url"], "archive/2026-11-07/")
+        self.assertEqual(selected[0]["previous_report_url"], "/archive/2026-11-07/")
         self.assertIn("20", selected[0]["repeat_change"])
+
+    def test_elapsed_repeat_keeps_previous_link_and_reports_only_known_comparison(self):
+        selected, _ = filter_repeat_entries([item("acme/recent", 1, None)], "2026-11-08", self.history)
+        self.assertEqual(selected[0]["previous_report_url"], "/archive/2026-11-01/")
+        self.assertEqual(selected[0]["repeat_basis"], "window_elapsed")
+        self.assertIn("未获取", selected[0]["repeat_change"])
+        self.assertNotIn("增长", selected[0]["repeat_change"])
+
+    def test_release_repeat_describes_verified_release_even_when_stars_unchanged(self):
+        release = {
+            "tag_name": "v2",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-11-03T00:00:00Z",
+            "html_url": "https://github.com/acme/released/releases/tag/v2",
+        }
+        selected, decisions = filter_repeat_entries(
+            [item("acme/released", 1)], "2026-11-04", self.history, releases_by_repository={"acme/released": [release]}
+        )
+        self.assertIn("v2", selected[0]["repeat_change"])
+        self.assertIn(release["published_at"], selected[0]["repeat_change"])
+        self.assertIn(release["html_url"], selected[0]["sources"])
+        self.assertEqual(decisions[0]["release"], release)
 
     def test_missing_or_zero_previous_metric_never_qualifies_for_star_exception(self):
         candidates = [item("acme/missing", 1, 100), item("acme/zero", 2, 100)]
@@ -77,6 +106,17 @@ class RepeatSelectionTests(unittest.TestCase):
         selected, decisions = filter_repeat_entries(candidates, "2026-11-08", history)
         self.assertEqual(selected, [])
         self.assertEqual([decision["reason"] for decision in decisions], ["recent_duplicate", "recent_duplicate"])
+
+    def test_release_exception_requires_identifiable_repository_release_source(self):
+        release = {"tag_name": "v2", "draft": False, "prerelease": False, "published_at": "2026-11-03T00:00:00Z"}
+        for url in (None, "https://example.com/release", "https://github.com/wrong/repo/releases/tag/v2"):
+            selected, _ = filter_repeat_entries(
+                [item("acme/released", 1)],
+                "2026-11-04",
+                self.history,
+                releases_by_repository={"acme/released": [dict(release, html_url=url)]},
+            )
+            self.assertEqual(selected, [])
 
     def test_only_latest_successful_occurrence_is_used_and_order_and_limit_are_preserved(self):
         history = [

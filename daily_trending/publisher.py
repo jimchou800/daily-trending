@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Status
+
 import json
 import os
 import re
@@ -22,14 +24,14 @@ def load_successful_history(site_root: Path) -> list[dict]:
     try:
         data = json.loads(history_path.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict) and item.get("status") == "published"]
+            return [item for item in data if isinstance(item, dict) and item.get("status") == Status.PUBLISHED]
     except (OSError, ValueError, json.JSONDecodeError):
         pass
     reports = []
     for path in (root / "archive").glob("*/report.json") if (root / "archive").exists() else []:
         try:
             report = json.loads(path.read_text(encoding="utf-8"))
-            if report.get("status") == "published":
+            if report.get("status") == Status.PUBLISHED:
                 reports.append(report)
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
             continue
@@ -141,7 +143,7 @@ def publish_report(
     """Publish a report before its Beijing deadline and commit the index last."""
     require_date(report.get("report_date"), "report_date")
     require_timestamp(published_at, "published_at")
-    require(report.get("status") in ("published", "sample_preview"), "report is not publishable")
+    require(report.get("status") in (Status.PUBLISHED, Status.SAMPLE_PREVIEW), "report is not publishable")
     validate_public_report(report)
     beijing = timezone(timedelta(hours=8))
     current_time = now.astimezone(beijing) if now else datetime.now(beijing)
@@ -149,7 +151,7 @@ def publish_report(
     require(current_time < deadline, "publication deadline has passed")
     report = dict(report)
     report["published_at"] = published_at
-    report["status"] = "published"
+    report["status"] = Status.PUBLISHED
     root = Path(site_root)
     recovered = recover_publication(root, now=current_time)
     if recovered is not None and recovered.parent.name == report["report_date"]:
@@ -210,7 +212,7 @@ def correct_report(
     page = archive / "index.html"
     require(target.exists() and page.exists(), "published report does not exist")
     existing = json.loads(target.read_text(encoding="utf-8"))
-    require(existing.get("status") == "published", "only published reports can be corrected")
+    require(existing.get("status") == Status.PUBLISHED, "only published reports can be corrected")
     require_github_url(
         existing.get("source", existing.get("source_url", "https://github.com/trending?since=daily")), "source"
     )
@@ -221,7 +223,7 @@ def correct_report(
         corrected_report.get("published_at", existing.get("published_at")) == existing.get("published_at"),
         "immutable field: published_at",
     )
-    require(corrected_report.get("status", existing.get("status")) == "published", "immutable field: status")
+    require(corrected_report.get("status", existing.get("status")) == Status.PUBLISHED, "immutable field: status")
     entries = existing.get("entries")
     replacement_entries = corrected_report.get("entries", entries)
     require(

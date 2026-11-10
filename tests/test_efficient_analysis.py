@@ -105,6 +105,7 @@ class EfficientAnalysisTests(unittest.TestCase):
         result = self.run_analysis(snapshot)
         self.assertEqual(result["stage"]["status"], "succeeded")
         self.assertEqual([d["reason"] for d in result["selection"]], ["unknown_relevance", "unknown_relevance"])
+        self.assertIsNone(result["selection_proof"]["decisions"][0]["is_ai"])
         self.classification_transform = lambda values: values[:1]
         result = self.run_analysis(snapshot)
         self.assertEqual(result["stage"]["status"], "failed")
@@ -152,6 +153,14 @@ class EfficientAnalysisTests(unittest.TestCase):
         self.assertLessEqual(len(self.calls[0][0].encode("utf-8")), 8000)
         self.assertTrue(all(len(prompt.encode("utf-8")) <= 6000 for prompt, _ in self.calls[1:]))
         self.assertTrue(all(len(data[0]["readme"]) < 20000 for _, data in self.calls[1:]))
+
+    def test_relevance_prompt_specifies_complete_positive_negative_and_unknown_objects(self):
+        self.run_analysis(self.snapshot(3))
+        header = self.calls[0][0].split("\n", 1)[0]
+        examples = json.loads(header.split("JSON示例：", 1)[1])["classifications"]
+        self.assertEqual([e["is_ai"] for e in examples], [True, False, None])
+        self.assertTrue(all(set(e) == {"repository", "is_ai", "ai_relevance_evidence"} for e in examples))
+        self.assertEqual(examples[-1]["ai_relevance_evidence"], "")
 
     def test_source_failure_is_incomplete_even_when_other_repository_is_non_ai(self):
         self.verdict = None

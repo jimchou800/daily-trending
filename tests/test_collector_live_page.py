@@ -34,6 +34,20 @@ class LivePageCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "complete"):
             parse_trending_html(HTML[: HTML.rindex("</article>")])
 
+    def test_truncation_at_each_complete_card_boundary_is_not_a_complete_page(self):
+        boundary = 0
+        while True:
+            boundary = HTML.find("</article>", boundary)
+            if boundary < 0:
+                break
+            boundary += len("</article>")
+            with self.subTest(boundary=boundary), self.assertRaisesRegex(ValueError, "complete"):
+                parse_trending_html(HTML[:boundary])
+
+    def test_missing_page_end_cannot_validate_even_after_list_closes(self):
+        with self.assertRaisesRegex(ValueError, "complete"):
+            parse_trending_html(HTML[: HTML.rindex("</html>")])
+
     def test_nested_metric_text_is_captured_until_its_own_closing_tag(self):
         nested = HTML.replace("1,587 stars today", "<span>1,587</span> stars today")
         self.assertEqual(parse_trending_html(nested)[-1]["stars_today"], 1587)

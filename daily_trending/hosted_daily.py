@@ -51,7 +51,20 @@ def run_hosted_daily(
     check_deadline()
     client = client or DashScopeClient()
     original_guard, original_transport = client.before_call, client.transport
-    initial = authority.state(period)
+
+    def recover_transport(operation: Callable, *, allow_late: bool = False):
+        # Reads and idempotent admission may be replayed, never a new run identity
+        # or a paid model dispatch. Bound recovery even when the server is down.
+        for recovery in range(MAX_ATTEMPTS):
+            if not allow_late:
+                check_deadline()
+            try:
+                return operation()
+            except OSError:
+                if recovery == MAX_ATTEMPTS - 1:
+                    raise
+
+    initial = recover_transport(lambda: authority.state(period))
     if initial.get("publication") is not None:
         return initial["publication"]
     identity = f"{run_id or 'runner'}:{uuid4().hex}"
@@ -61,9 +74,11 @@ def run_hosted_daily(
             check_deadline()
             # begin is server-persisted and rejects a fourth distinct attempt,
             # even after a runner restart or overlapping scheduler delivery.
-            token = authority.call("begin", {"period": period, "run_id": f"{identity}:{attempt}"})
+            token = recover_transport(
+                lambda: authority.call("begin", {"period": period, "run_id": f"{identity}:{attempt}"})
+            )
             fence = token["fence"]
-            store = RemoteArtifactStore(authority, period, fence)
+            store = recover_transport(lambda: RemoteArtifactStore(authority, period, fence))
             if store.remote.get("publication") is not None:
                 return store.remote["publication"]
             client.transport = RemoteModelTransport(authority, period, fence, original_transport)
@@ -97,7 +112,7 @@ def run_hosted_daily(
                 last_error = exc
                 # Lost publication acknowledgement can be recovered even after
                 # cutoff, without replaying generation or mutating the archive.
-                recovered = authority.state(period)
+                recovered = recover_transport(lambda: authority.state(period), allow_late=True)
                 if recovered.get("publication") is not None:
                     return recovered["publication"]
         raise RuntimeError("hosted generation attempts exhausted") from last_error

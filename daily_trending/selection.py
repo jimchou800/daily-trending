@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from .contracts import RepeatBasis, SelectionReason, Status
+
 from copy import deepcopy
 from datetime import date, datetime, time, timedelta, timezone
 import json
 from pathlib import Path
 
-from .contracts import require, require_date
+from .contracts import MISSING_METRIC, require, require_date
 
 BEIJING = timezone(timedelta(hours=8))
 WINDOW = timedelta(hours=168)
@@ -23,7 +25,7 @@ def load_published_history(site_root: Path) -> list[dict]:
             continue
         if (
             isinstance(report, dict)
-            and report.get("status") == "published"
+            and report.get("status") == Status.PUBLISHED
             and report.get("report_date") == path.parent.name
         ):
             reports.append(report)
@@ -41,7 +43,7 @@ def _successful_history(history: list[dict]) -> list[dict]:
             record
             for record in history
             if isinstance(record, dict)
-            and record.get("status") == "published"
+            and record.get("status") == Status.PUBLISHED
             and isinstance(record.get("report_date"), str)
         ),
         key=lambda record: record["report_date"],
@@ -60,9 +62,15 @@ def _heat(entry: dict) -> dict:
     return entry if isinstance(entry, dict) else {}
 
 
-def _formal_release_after(releases: list[dict], previous: datetime) -> bool:
+def _formal_release_after(releases: list[dict], previous: datetime, repository: str) -> dict | None:
     for release in releases:
         if not isinstance(release, dict) or release.get("draft") is not False or release.get("prerelease") is not False:
+            continue
+        if not isinstance(release.get("tag_name"), str) or not release["tag_name"].strip():
+            continue
+        if not isinstance(release.get("html_url"), str) or not release["html_url"].startswith(
+            f"https://github.com/{repository}/releases/"
+        ):
             continue
         published_at = release.get("published_at")
         if not isinstance(published_at, str):
@@ -74,8 +82,8 @@ def _formal_release_after(releases: list[dict], previous: datetime) -> bool:
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=BEIJING)
         if timestamp.astimezone(BEIJING) > previous:
-            return True
-    return False
+            return release
+    return None
 
 
 def filter_repeat_entries(
@@ -115,16 +123,16 @@ def filter_repeat_entries(
         repository = _entry_repository(candidate)
         decision: dict = {"repository": repository, "eligible": False}
         if not repository:
-            decision["reason"] = "invalid_candidate"
+            decision["reason"] = SelectionReason.INVALID_CANDIDATE
             decisions.append(decision)
             continue
         previous = latest_by_repo.get(repository)
         if previous is None:
-            decision.update(eligible=True, reason="first_inclusion")
+            decision.update(eligible=True, reason=SelectionReason.FIRST_INCLUSION)
         else:
             elapsed = current - previous["period"]
             if elapsed >= WINDOW:
-                decision.update(eligible=True, reason="window_elapsed")
+                decision.update(eligible=True, reason=SelectionReason.WINDOW_ELAPSED)
             else:
                 old_stars = _heat(previous["entry"]).get("stars_today")
                 new_stars = _heat(candidate).get("stars_today")
@@ -135,26 +143,41 @@ def filter_repeat_entries(
                     and new_stars >= old_stars * 2
                     and new_stars > old_stars
                 )
-                released = _formal_release_after(releases_by_repository.get(repository, []), previous["period"])
+                released = _formal_release_after(
+                    releases_by_repository.get(repository, []), previous["period"], repository
+                )
                 if released:
-                    decision.update(eligible=True, reason="recent_exception", repeat_basis="new_formal_release")
+                    decision.update(
+                        eligible=True,
+                        reason=SelectionReason.RECENT_EXCEPTION,
+                        repeat_basis=RepeatBasis.NEW_FORMAL_RELEASE,
+                        release=released,
+                    )
                 elif doubled:
-                    decision.update(eligible=True, reason="recent_exception", repeat_basis="stars_doubled")
+                    decision.update(
+                        eligible=True, reason=SelectionReason.RECENT_EXCEPTION, repeat_basis=RepeatBasis.STARS_DOUBLED
+                    )
                 else:
-                    decision["reason"] = "recent_duplicate"
+                    decision["reason"] = SelectionReason.RECENT_DUPLICATE
         if decision["eligible"]:
             enriched = deepcopy(candidate)
-            if previous is not None and decision.get("repeat_basis"):
-                enriched["repeat_basis"] = decision["repeat_basis"]
-                enriched["repeat_change"] = (
-                    f"相较 {previous['record']['report_date']}：当日新增 Star {old_stars} → {new_stars}"
-                )
-                enriched["previous_report_url"] = f"archive/{previous['record']['report_date']}/"
+            if previous is not None:
+                enriched["repeat_basis"] = decision.get("repeat_basis", SelectionReason.WINDOW_ELAPSED)
+                old_stars = _heat(previous["entry"]).get("stars_today")
+                new_stars = _heat(candidate).get("stars_today")
+                comparison = f"当日新增 Star {old_stars if old_stars is not None else MISSING_METRIC} → {new_stars if new_stars is not None else MISSING_METRIC}"
+                release = decision.get("release")
+                if release:
+                    comparison = f"新增正式 Release {release.get('tag_name') or '（未提供标签）'}，发布时间 {release['published_at']}；{comparison}"
+                    if release.get("html_url"):
+                        enriched.setdefault("sources", []).append(release["html_url"])
+                enriched["repeat_change"] = f"相较 {previous['record']['report_date']}：{comparison}"
+                enriched["previous_report_url"] = f"/archive/{previous['record']['report_date']}/"
                 decision["previous_report_url"] = enriched["previous_report_url"]
             if len(selected) < limit:
                 selected.append(enriched)
             else:
                 decision["eligible"] = False
-                decision["reason"] = "limit_reached"
+                decision["reason"] = SelectionReason.LIMIT_REACHED
         decisions.append(decision)
     return selected, decisions

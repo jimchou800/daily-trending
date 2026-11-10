@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import SelectionOutcome, SelectionReason, Stage, Status
+
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -21,7 +23,7 @@ def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str |
     response values for those fields are ignored.  Non-AI entries are filtered
     in source order and are never replaced with outside projects.
     """
-    validate_common_artifact(snapshot, "collector")
+    validate_common_artifact(snapshot, Stage.COLLECTOR)
     if expected_period is not None and snapshot["period_id"] != expected_period:
         raise ValueError("period does not match requested run")
     source = snapshot["snapshot"]
@@ -96,14 +98,14 @@ def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str |
             }
         )
     if not analyses and any(item.get("is_ai") is True for item in responses if isinstance(item, dict)) and errors:
-        status = "failed"
+        status = Status.FAILED
     else:
-        status = "succeeded"
+        status = Status.SUCCEEDED
     return {
         "contract_version": CONTRACT_VERSION,
         "period_id": snapshot["period_id"],
         "snapshot_id": snapshot["snapshot_id"],
-        "stage": {"name": "analyzer", "status": status, "errors": errors},
+        "stage": {"name": Stage.ANALYZER, "status": status, "errors": errors},
         "snapshot": {
             "source_url": source["source_url"],
             "scope": source["scope"],
@@ -128,7 +130,7 @@ def analyze_live_snapshot(
     Sources and validated model output are cached by snapshot/model/schema. Missing
     classifications are incomplete work, never a verified empty selection.
     """
-    validate_common_artifact(snapshot, "collector")
+    validate_common_artifact(snapshot, Stage.COLLECTOR)
     if expected_period is not None and snapshot["period_id"] != expected_period:
         raise ValueError("period does not match requested run")
     entries = snapshot["snapshot"].get("entries")
@@ -200,7 +202,9 @@ def analyze_live_snapshot(
                     {
                         "repository": entry["repository"],
                         "eligible": False,
-                        "reason": "not_ai" if relevance["is_ai"] is False else "unknown_relevance",
+                        "reason": (
+                            SelectionReason.NOT_AI if relevance["is_ai"] is False else SelectionReason.UNKNOWN_RELEVANCE
+                        ),
                         "evidence": relevance["ai_relevance_evidence"],
                     }
                 )
@@ -237,6 +241,7 @@ def analyze_live_snapshot(
                 for key in ("repeat_basis", "repeat_change", "previous_report_url"):
                     if key in entry:
                         analysis[key] = entry[key]
+                analysis["sources"] = list(dict.fromkeys(analysis["sources"] + entry.get("sources", [])))
                 analyses.append(analysis)
                 if cache_store:
                     cache_store.save_analysis(repo, sid, model, response)
@@ -247,7 +252,7 @@ def analyze_live_snapshot(
             except Exception as exc:
                 failed_details.add(repo)
                 errors.append(f"analysis failed for {repo}: {exc}")
-    status = "succeeded" if complete and (analyses or not eligible) else "failed"
+    status = Status.SUCCEEDED if complete and (analyses or not eligible) else Status.FAILED
     by_decision = {decision["repository"]: decision for decision in decisions}
     selected_repos = {analysis["repository"] for analysis in analyses}
     proof_decisions = []
@@ -255,18 +260,22 @@ def analyze_live_snapshot(
         repo = entry["repository"]
         relevance = classifications.get(repo, {})
         decision = dict(
-            by_decision.get(repo, {"repository": repo, "eligible": False, "reason": "classification_incomplete"})
+            by_decision.get(
+                repo, {"repository": repo, "eligible": False, "reason": SelectionReason.CLASSIFICATION_INCOMPLETE}
+            )
         )
         decision.update(
-            is_ai=relevance.get("is_ai") is True,
+            is_ai=relevance.get("is_ai"),
             ai_relevance_evidence=relevance.get("ai_relevance_evidence", ""),
             releases=release_evidence.get(repo, []),
         )
         decision["outcome"] = (
-            "selected" if repo in selected_repos else "analysis_failed" if repo in failed_details else "excluded"
+            SelectionOutcome.SELECTED
+            if repo in selected_repos
+            else SelectionOutcome.ANALYSIS_FAILED if repo in failed_details else SelectionOutcome.EXCLUDED
         )
-        if decision.get("eligible") and decision["outcome"] == "excluded":
-            decision.update(eligible=False, reason="limit_reached")
+        if decision.get("eligible") and decision["outcome"] == SelectionOutcome.EXCLUDED:
+            decision.update(eligible=False, reason=SelectionReason.LIMIT_REACHED)
         proof_decisions.append(decision)
     selection_proof = {
         "completed": complete,
@@ -279,11 +288,11 @@ def analyze_live_snapshot(
         "period_id": snapshot["period_id"],
         "snapshot_id": sid,
         "analysis_schema": "2",
-        "stage": {"name": "analyzer", "status": status, "errors": errors},
+        "stage": {"name": Stage.ANALYZER, "status": status, "errors": errors},
         "snapshot": {key: source[key] for key in ("source_url", "scope", "collected_at")},
         "analyses": analyses,
         "release_evidence": release_evidence,
-        "selection": sorted(
+        Stage.SELECTION: sorted(
             decisions, key=lambda d: next(i for i, e in enumerate(entries) if e["repository"] == d["repository"])
         ),
         "classifications": list(classifications.values()),

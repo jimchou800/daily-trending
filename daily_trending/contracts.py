@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -10,6 +11,68 @@ TRENDING_URL = "https://github.com/trending?since=daily"
 TRENDING_SCOPE = "GitHub Trending Daily（全部编程语言）"
 UNKNOWN_REASON = "暂未找到明确原因"
 MISSING_METRIC = "未获取"
+
+
+class Stage(StrEnum):
+    """Canonical Stage values shared by producers and validators."""
+
+    COLLECTOR = "collector"
+    ANALYZER = "analyzer"
+    ORGANIZER = "organizer"
+    PUBLISHER = "publisher"
+    SELECTION = "selection"
+
+
+class Status(StrEnum):
+    """Canonical Status values shared by producers and validators."""
+
+    PUBLISHED = "published"
+    SAMPLE_PREVIEW = "sample_preview"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    PENDING = "pending"
+    RUNNING = "running"
+    UNPUBLISHED = "unpublished"
+    EXPIRED = "expired"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    RETRY_EXHAUSTED = "retry_exhausted"
+    READY = "ready"
+
+
+class SelectionOutcome(StrEnum):
+    """Canonical SelectionOutcome values shared by producers and validators."""
+
+    SELECTED = "selected"
+    EXCLUDED = "excluded"
+    ANALYSIS_FAILED = "analysis_failed"
+
+
+class SelectionReason(StrEnum):
+    """Canonical SelectionReason values shared by producers and validators."""
+
+    INVALID_CANDIDATE = "invalid_candidate"
+    FIRST_INCLUSION = "first_inclusion"
+    WINDOW_ELAPSED = "window_elapsed"
+    RECENT_EXCEPTION = "recent_exception"
+    RECENT_DUPLICATE = "recent_duplicate"
+    LIMIT_REACHED = "limit_reached"
+    NOT_AI = "not_ai"
+    UNKNOWN_RELEVANCE = "unknown_relevance"
+    CLASSIFICATION_INCOMPLETE = "classification_incomplete"
+
+
+class RepeatBasis(StrEnum):
+    """Canonical RepeatBasis values shared by producers and validators."""
+
+    NEW_FORMAL_RELEASE = "new_formal_release"
+    STARS_DOUBLED = "stars_doubled"
+
+
+class UsageStatus(StrEnum):
+    """Canonical UsageStatus values shared by producers and validators."""
+
+    UNAVAILABLE = "unavailable"
+    REPORTED = "reported"
 
 
 def require(condition: bool, message: str) -> None:
@@ -49,7 +112,7 @@ def validate_common_artifact(artifact: dict, expected_stage: str) -> None:
     require(isinstance(artifact.get("snapshot_id"), str) and artifact["snapshot_id"], "missing snapshot")
     stage = artifact.get("stage")
     require(isinstance(stage, dict) and stage.get("name") == expected_stage, f"invalid {expected_stage} stage")
-    require(stage.get("status") == "succeeded", f"{expected_stage} stage is not succeeded")
+    require(stage.get("status") == Status.SUCCEEDED, f"{expected_stage} stage is not succeeded")
 
 
 def validate_public_report(report: dict) -> None:
@@ -72,7 +135,7 @@ def validate_public_report(report: dict) -> None:
     require_timestamp(report["collected_at"], "collected_at")
     require_github_url(report["source"], "source")
     require(report["timezone"] == "Asia/Shanghai", "invalid report timezone")
-    require(report["status"] in ("published", "sample_preview"), "invalid report status")
+    require(report["status"] in (Status.PUBLISHED, Status.SAMPLE_PREVIEW), "invalid report status")
     entries = report["entries"]
     require(isinstance(entries, list) and len(entries) <= 5, "invalid report entries")
     require(report["entry_count"] == len(entries), "invalid report entry count")

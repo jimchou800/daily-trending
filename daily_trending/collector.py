@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Stage, Status
+
 import hashlib
 import json
 import re
@@ -51,10 +53,21 @@ class _TrendingParser(HTMLParser):
         self._buffer: list[str] = []
         self._capture_depth = 0
         self._link: str | None = None
+        self._page_started = False
+        self._page_closed = False
+        self._body_started = False
+        self._body_closed = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
+        if tag == "html":
+            require(not self._page_started, "trending response is not complete")
+            self._page_started = True
+        if tag == "body":
+            require(self._page_started and not self._body_started, "trending response is not complete")
+            self._body_started = True
         if tag == "article" and "Box-row" in (attributes.get("class") or "").split():
+            require(self._body_started and not self._body_closed, "trending response is not complete")
             require(self._card is None, "trending response is not complete")
             self._card = {
                 "href": None,
@@ -109,6 +122,12 @@ class _TrendingParser(HTMLParser):
                 self._buffer.append(clean)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "body":
+            require(self._body_started and self._card is None, "trending response is not complete")
+            self._body_closed = True
+        if tag == "html":
+            require(self._body_closed, "trending response is not complete")
+            self._page_closed = True
         if tag in _VOID_TAGS or self._card is None:
             return
         require(self._stack and self._stack[-1] == tag, "trending response is not complete")
@@ -150,6 +169,7 @@ def parse_trending_html(html: str) -> list[dict]:
     parser.feed(html)
     parser.close()
     require(parser._card is None, "trending response is not complete")
+    require(parser._page_closed, "trending response is not complete")
     require(parser.cards, "trending response is not complete")
     entries = []
     for rank, card in enumerate(parser.cards, start=1):
@@ -199,7 +219,7 @@ def _artifact_from_entries(entries: list[dict], issue_date: str, collected_at: s
         "contract_version": CONTRACT_VERSION,
         "period_id": issue_date,
         "snapshot_id": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16],
-        "stage": {"name": "collector", "status": "succeeded", "errors": []},
+        "stage": {"name": Stage.COLLECTOR, "status": Status.SUCCEEDED, "errors": []},
         "snapshot": {
             "source_url": TRENDING_URL,
             "scope": TRENDING_SCOPE,

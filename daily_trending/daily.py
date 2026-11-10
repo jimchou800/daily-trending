@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Status
+
 import json
 import sys
 from datetime import datetime, timezone
@@ -111,7 +113,7 @@ def run_daily(
         check_deadline()
         report = json.loads(result.report_path.read_text(encoding="utf-8"))
         report["published_at"] = clock().astimezone(timezone.utc).isoformat(timespec="seconds")
-        report["status"] = "published"
+        report["status"] = Status.PUBLISHED
         return publish_report(
             report,
             render_html(report),

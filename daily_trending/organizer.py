@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Stage, Status
+
 import html
 import json
 from pathlib import Path
@@ -20,7 +22,7 @@ from .contracts import (
 
 def organize_report(analysis: dict, published_at: str | None = None) -> dict:
     """Validate an analyzer artifact and create canonical report JSON data."""
-    validate_common_artifact(analysis, "analyzer")
+    validate_common_artifact(analysis, Stage.ANALYZER)
     if published_at is not None:
         require_timestamp(published_at, "published_at")
     entries = analysis.get("analyses")
@@ -55,7 +57,7 @@ def organize_report(analysis: dict, published_at: str | None = None) -> dict:
         "published_at": published_at,
         "source": analysis["snapshot"]["source_url"],
         "scope": TRENDING_SCOPE,
-        "status": "published" if published_at else "sample_preview",
+        "status": Status.PUBLISHED if published_at else Status.SAMPLE_PREVIEW,
         "entry_count": len(report_entries),
         "entries": report_entries,
     }

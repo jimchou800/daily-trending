@@ -94,6 +94,24 @@ class LiveCollectorTests(unittest.TestCase):
 
 
 class DashScopeTests(unittest.TestCase):
+    def test_selected_model_disables_thinking_and_uses_bounded_configured_timeout(self):
+        response = json.dumps(
+            {"choices": [{"message": {"content": "{}"}}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+        ).encode()
+        for model in ("dashscope/qwen3.8-max", "qwen3.8-max", "custom-model-v2"):
+            client = DashScopeClient(api_key="test", config=DashScopeConfig(model=model))
+            with patch("daily_trending.dashscope.urlopen", return_value=BytesIO(response)) as http:
+                client.complete("source")
+            payload = json.loads(http.call_args.args[0].data)
+            if model.endswith("qwen3.8-max"):
+                self.assertIs(payload["enable_thinking"], False)
+            else:
+                self.assertNotIn("enable_thinking", payload)
+            self.assertEqual(http.call_args.kwargs["timeout"], 120)
+        for timeout in (0, 181, True, 1.5):
+            with self.assertRaises(ValueError):
+                DashScopeConfig(request_timeout_seconds=timeout)
+
     def test_http_request_preserves_custom_remote_model_id(self):
         for model in ("qwen3.8-max", "custom-model-v2", "dashscope/custom-model-v2"):
             with self.subTest(model=model):

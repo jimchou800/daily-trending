@@ -63,6 +63,48 @@ describe("durable admission", () => {
     );
     expect(results.map((r) => r.status).sort()).toEqual([200, 200, 409]);
   });
+  it("settles unknown provider usage at the full reserved bound without refund or monthly blockade", async () => {
+    const { fence } = (await (
+      await call("begin", { period: "2026-11-10", run_id: "a" })
+    ).json()) as { fence: number };
+    const args = {
+      period: "2026-11-10",
+      fence,
+      amount_micros: 480,
+      input_tokens: 1,
+      output_tokens: 1,
+    };
+    await call("reserve", { ...args, key: "unknown" });
+    expect(
+      (
+        await call("usage", {
+          period: args.period,
+          key: "unknown",
+          usage_status: "unavailable",
+          actual_micros: 48,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await call("usage", {
+          period: args.period,
+          key: "unknown",
+          usage_status: "unavailable",
+          actual_micros: 480,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await call("reserve", { ...args, key: "retry" })).status).toBe(200);
+    expect(
+      await (await call("state?period=2026-11-10", undefined, "GET")).json(),
+    ).toMatchObject({
+      month: { reserved_micros: 960, accounting_blocked: false },
+      reservations: {
+        unknown: { actual_micros: 480, usage_status: "unavailable" },
+      },
+    });
+  });
   it("rejects old dates and cutoff starts", async () => {
     expect(
       (await call("begin", { period: "2026-11-09", run_id: "a" })).status,
@@ -174,7 +216,7 @@ const report = {
   entry_count: 1,
   entries: [entry],
 };
-async function prepare() {
+async function prepare(selection?: Record<string, unknown>) {
   await install();
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T00:15:00Z"));
   const { fence } = (await (
@@ -191,7 +233,7 @@ async function prepare() {
       period: "2026-11-10",
       fence,
       key: "selection",
-      value: {
+      value: selection ?? {
         completed: true,
         eligible_count: 1,
         decisions: [
@@ -209,6 +251,75 @@ async function prepare() {
   return fence;
 }
 describe("atomic report publication", () => {
+  it("accepts the canonical explicit unknown reason text", async () => {
+    const fence = await prepare();
+    expect(
+      (
+        await call("stage", {
+          period: "2026-11-10",
+          fence,
+          report: {
+            ...report,
+            entries: [{ ...entry, reason: "暂未找到明确原因" }],
+          },
+        })
+      ).status,
+    ).toBe(200);
+  });
+  it.each([
+    {
+      is_ai: null,
+      ai_relevance_evidence: "",
+      outcome: "excluded",
+      reason: "unknown_relevance",
+      expected: 200,
+    },
+    {
+      is_ai: false,
+      ai_relevance_evidence: "",
+      outcome: "excluded",
+      reason: "not_ai",
+      expected: 400,
+    },
+    {
+      is_ai: true,
+      ai_relevance_evidence: "",
+      outcome: "selected",
+      expected: 400,
+    },
+    {
+      is_ai: null,
+      ai_relevance_evidence: "",
+      outcome: "selected",
+      reason: "unknown_relevance",
+      expected: 400,
+    },
+    {
+      is_ai: null,
+      ai_relevance_evidence: "",
+      outcome: "excluded",
+      reason: "not_ai",
+      expected: 400,
+    },
+  ])(
+    "validates unknown exclusions separately from supported verdicts: $is_ai/$outcome/$reason",
+    async ({ expected, ...decision }) => {
+      const fence = await prepare({
+        completed: true,
+        eligible_count: 0,
+        decisions: [{ repository, ...decision }],
+      });
+      expect(
+        (
+          await call("stage", {
+            period: "2026-11-10",
+            fence,
+            report: { ...report, entries: [], entry_count: 0 },
+          })
+        ).status,
+      ).toBe(expected);
+    },
+  );
   it("keeps staged blobs private then publishes one immutable canonical date and history event", async () => {
     const fence = await prepare();
     const staged = await call("stage", { period: "2026-11-10", fence, report });
@@ -708,7 +819,7 @@ describe("authoritative inclusion window", () => {
       await call("publish", { period: previous, fence: 1, hash });
       const result = await stageDay("2026-11-10", stars, {
         repeat_change: "变化",
-        previous_report_url: `archive/${previous}/`,
+        previous_report_url: `/archive/${previous}/`,
         ...(basis ? { repeat_basis: basis } : {}),
       });
       expect(result.status).toBe(expected);
@@ -733,7 +844,7 @@ describe("authoritative inclusion window", () => {
       10,
       {
         repeat_change: "正式版本更新",
-        previous_report_url: "archive/2026-11-04/",
+        previous_report_url: "/archive/2026-11-04/",
         repeat_basis: "new_formal_release",
       },
       releases,

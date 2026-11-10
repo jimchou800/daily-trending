@@ -34,6 +34,7 @@ class AuthorityHTTP:
         self.fail_stage = 0
         self.lose_publish_ack = False
         self.fail_publish = False
+        self.runs = {}
 
     def __call__(self, method, path, body):
         self.calls.append((method, path, copy.deepcopy(body)))
@@ -41,11 +42,15 @@ class AuthorityHTTP:
         if op == "state":
             return copy.deepcopy(self.data)
         if op == "begin":
+            if body["run_id"] in self.runs:
+                return self.runs[body["run_id"]]
             if self.data["attempts"] >= 3:
                 raise RuntimeError("attempts exhausted")
             self.data["attempts"] += 1
             self.data["fence"] += 1
-            return {"fence": self.data["fence"], "attempts": self.data["attempts"]}
+            token = {"fence": self.data["fence"], "attempts": self.data["attempts"]}
+            self.runs[body["run_id"]] = token
+            return token
         if op == "artifact":
             key, value = body["key"], body["value"]
             if key in self.data["artifacts"] and self.data["artifacts"][key] != value:
@@ -113,6 +118,53 @@ def paid_response(payload, _key):
 
 
 class HostedTests(unittest.TestCase):
+    def test_model_timeout_settles_full_reservation_before_a_separately_charged_retry(self):
+        http = AuthorityHTTP()
+        dispatches = 0
+
+        def model(payload, key):
+            nonlocal dispatches
+            dispatches += 1
+            if dispatches == 1:
+                raise TimeoutError("provider timeout")
+            return {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+
+        remote = authority(http)
+        transport = RemoteModelTransport(remote, PERIOD, 1, model)
+        payload = {"messages": [{"content": "x"}], "max_completion_tokens": 10}
+        with self.assertRaises(TimeoutError):
+            transport(payload, "secret")
+        first = next(iter(http.data["reservations"].values()))
+        self.assertEqual(first["actual_micros"], first["amount_micros"])
+        usage = [body for _, path, body in http.calls if path.endswith("usage")][0]
+        self.assertEqual(usage["usage_status"], "unavailable")
+        self.assertFalse(usage["accounting_blocked"])
+        transport(payload, "secret")
+        self.assertEqual(dispatches, 2)
+        self.assertEqual(len(http.data["reservations"]), 2)
+        self.assertEqual(http.data["month"]["reserved_micros"], first["amount_micros"] * 2)
+
+    def test_failed_timeout_settlement_blocks_next_dispatch(self):
+        http = AuthorityHTTP()
+
+        def request(method, path, body):
+            if path.endswith("usage"):
+                raise ConnectionError("settlement unavailable")
+            return http(method, path, body)
+
+        remote = authority(request)
+        dispatches = []
+
+        def model(*_):
+            dispatches.append(True)
+            raise TimeoutError("provider timeout")
+
+        payload = {"messages": [{"content": "x"}], "max_completion_tokens": 10}
+        for _ in range(2):
+            with self.assertRaises(BudgetExceeded):
+                RemoteModelTransport(remote, PERIOD, 1, model)(payload, "secret")
+        self.assertEqual(len(dispatches), 1)
+
     def test_lost_reservation_ack_never_dispatches_model(self):
         calls = []
 
@@ -220,6 +272,63 @@ class HostedTests(unittest.TestCase):
 
 
 class HostedRunnerTests(unittest.TestCase):
+    def test_transient_initial_state_and_store_initialization_recover(self):
+        for failed_state in (1, 2):
+            with self.subTest(failed_state=failed_state):
+                http = AuthorityHTTP()
+                states = 0
+
+                def request(method, path, body):
+                    nonlocal states
+                    if "state?" in path:
+                        states += 1
+                        if states == failed_state:
+                            raise ConnectionError("temporary state outage")
+                    return http(method, path, body)
+
+                with TemporaryDirectory() as directory:
+                    report = self.run_job(request, directory)
+                self.assertEqual(report["status"], "published")
+                self.assertEqual(http.data["attempts"], 1)
+
+    def test_lost_begin_ack_reuses_identical_run_id_without_spending_an_attempt(self):
+        http = AuthorityHTTP()
+        lost = False
+
+        def request(method, path, body):
+            nonlocal lost
+            result = http(method, path, body)
+            if path.endswith("begin") and not lost:
+                lost = True
+                raise TimeoutError("begin acknowledgement lost")
+            return result
+
+        with TemporaryDirectory() as directory:
+            report = self.run_job(request, directory)
+        begins = [body["run_id"] for _, path, body in http.calls if path.endswith("begin")]
+        self.assertEqual(len(begins), 2)
+        self.assertEqual(begins[0], begins[1])
+        self.assertEqual(http.data["attempts"], 1)
+        self.assertEqual(report["status"], "published")
+
+    def test_persistent_begin_transport_failure_is_bounded_without_new_run_ids(self):
+        http = AuthorityHTTP()
+        begins = []
+
+        def request(method, path, body):
+            if path.endswith("begin"):
+                begins.append(body["run_id"])
+                http(method, path, body)
+                raise TimeoutError("lost every acknowledgement")
+            return http(method, path, body)
+
+        with TemporaryDirectory() as directory, self.assertRaises(TimeoutError):
+            self.run_job(request, directory)
+        self.assertEqual(len(begins), 3)
+        self.assertEqual(len(set(begins)), 1)
+        self.assertEqual(http.data["attempts"], 1)
+        self.assertEqual(http.data["reservations"], {})
+
     def run_job(self, http, directory, **kwargs):
         client = DashScopeClient(
             api_key="private-model-key", transport=paid_response, config=DashScopeConfig(max_retries=0)

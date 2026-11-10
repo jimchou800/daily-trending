@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Stage, Status
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,11 +82,11 @@ def run_live_pipeline(
         )
         store.begin_run()
     try:
-        snapshot = store.load_compatible("collector") if store else None
+        snapshot = store.load_compatible(Stage.COLLECTOR) if store else None
         if snapshot is None:
             snapshot = collect_trending(issue_date, collected_at, fetch=fetch)
             if store:
-                store.save("collector", snapshot)
+                store.save(Stage.COLLECTOR, snapshot)
         collector_path = output_dir / "collector.json"
         collector_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if store:
@@ -106,7 +108,9 @@ def run_live_pipeline(
         successful_history = (
             history if history is not None else load_published_history(history_root) if history_root else []
         )
-        analysis = store.load_compatible("analyzer", snapshot["snapshot_id"], client.config.model) if store else None
+        analysis = (
+            store.load_compatible(Stage.ANALYZER, snapshot["snapshot_id"], client.config.model) if store else None
+        )
         if analysis is None:
             analysis = analyze_live_snapshot(
                 snapshot,
@@ -117,32 +121,32 @@ def run_live_pipeline(
                 history=successful_history,
                 releases_by_repository=releases_by_repository,
             )
-        if store and analysis["stage"]["status"] == "succeeded":
+        if store and analysis["stage"]["status"] == Status.SUCCEEDED:
             analysis["model"] = client.config.model
-            store.save("analyzer", analysis)
+            store.save(Stage.ANALYZER, analysis)
             store.save(
-                "selection",
+                Stage.SELECTION,
                 {
                     "contract_version": analysis["contract_version"],
                     "period_id": issue_date,
                     "snapshot_id": snapshot["snapshot_id"],
-                    "stage": {"name": "selection", "status": "succeeded"},
+                    "stage": {"name": Stage.SELECTION, "status": Status.SUCCEEDED},
                     **analysis["selection_proof"],
                 },
             )
         analyzer_path = output_dir / "analyzer.json"
         analyzer_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         (output_dir / "selection.json").write_text(
-            json.dumps(analysis["selection"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            json.dumps(analysis[Stage.SELECTION], ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         report = organize_report(analysis)
         report_path, html_path = write_report(report, output_dir)
         if store:
-            store.finish_run("succeeded")
+            store.finish_run(Status.SUCCEEDED)
         return PipelineResult(report_path, html_path, collector_path, analyzer_path)
     except Exception as exc:
         if store:
-            store.finish_run("failed", str(exc))
+            store.finish_run(Status.FAILED, str(exc))
         raise
     finally:
         client._reserve_call = original_reserve

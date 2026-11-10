@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Status
+
 import json
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -67,16 +69,16 @@ class BeijingScheduler:
     def status(self) -> dict[str, object]:
         """Return an inspectable internal status for logs and scheduler dashboards."""
         if self.current_time().date() > datetime.fromisoformat(self.report_date).date() or not self.before_deadline():
-            status = "expired"
+            status = Status.EXPIRED
             message = "今日期刊已过 09:00 截止时间"
         elif self.spent_cny >= self.monthly_budget_cny:
-            status = "budget_exhausted"
+            status = Status.BUDGET_EXHAUSTED
             message = "当月生成额度已用尽"
         elif self.attempts >= MAX_ATTEMPTS:
-            status = "retry_exhausted"
+            status = Status.RETRY_EXHAUSTED
             message = "本期期刊重试次数已用尽"
         else:
-            status = "ready"
+            status = Status.READY
             message = ""
         return {"status": status, "message": message, "attempts": self.attempts, "spent_cny": self.spent_cny}
 
@@ -144,16 +146,16 @@ def homepage_status(site_root: Path, now: datetime | None = None) -> dict[str, o
     except (AttributeError, TypeError, ValueError):
         pass
     if valid_publication and latest == today.isoformat():
-        return {"status": "published", "latest_report_date": latest, "published_at": published_at, "message": ""}
+        return {"status": Status.PUBLISHED, "latest_report_date": latest, "published_at": published_at, "message": ""}
     if current.time() < time(9):
         return {
-            "status": "published" if valid_publication else "unpublished",
+            "status": Status.PUBLISHED if valid_publication else Status.UNPUBLISHED,
             "latest_report_date": latest,
             "published_at": published_at,
             "message": "" if valid_publication else "尚未发布",
         }
     return {
-        "status": "failed",
+        "status": Status.FAILED,
         "latest_report_date": latest,
         "published_at": published_at,
         "message": "今日日报生成失败" if latest else "尚未发布；今日日报生成失败",

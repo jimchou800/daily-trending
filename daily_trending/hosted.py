@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .contracts import Stage, UsageStatus
+
 import json
 from typing import Any, Callable
 from urllib.parse import urlencode, urlparse
@@ -118,7 +120,26 @@ class RemoteModelTransport:
         try:
             response = self.transport(payload, api_key)
         except Exception:
-            self.authority.accounting_uncertain = True
+            # A timed-out provider may still bill the call. Charge the entire
+            # reservation, explicitly as an unknown estimate, before retrying.
+            try:
+                ack = self.authority.call(
+                    "usage",
+                    {
+                        "period": self.period,
+                        "key": key,
+                        "actual_micros": amount,
+                        "usage_status": UsageStatus.UNAVAILABLE,
+                        "accounting_blocked": False,
+                    },
+                )
+            except Exception as exc:
+                self.authority.accounting_uncertain = True
+                self.blocked = True
+                raise BudgetExceeded("unknown usage settlement acknowledgement unavailable") from exc
+            if ack.get("accounting_blocked") is True:
+                self.blocked = True
+                raise BudgetExceeded("remote model accounting blocked")
             raise
         usage = response.get("usage") if isinstance(response, dict) else None
         valid = isinstance(usage, dict) and all(
@@ -136,7 +157,14 @@ class RemoteModelTransport:
         blocked = not valid or prompt > input_tokens or output > output_tokens or actual > amount
         try:
             ack = self.authority.call(
-                "usage", {"period": self.period, "key": key, "actual_micros": actual, "accounting_blocked": blocked}
+                "usage",
+                {
+                    "period": self.period,
+                    "key": key,
+                    "actual_micros": actual,
+                    "usage_status": UsageStatus.REPORTED if valid else UsageStatus.UNAVAILABLE,
+                    "accounting_blocked": blocked,
+                },
             )
         except Exception as exc:
             self.authority.accounting_uncertain = True
@@ -189,7 +217,7 @@ class RemoteArtifactStore:
 
     def save(self, stage: str, artifact: dict) -> None:
         """Store a stage privately, preserving first snapshot before downstream work."""
-        if stage == "collector":
+        if stage == Stage.COLLECTOR:
             source = artifact["snapshot"]
             self._put("snapshot", dict(source, source=source["source_url"], complete=True, collector_artifact=artifact))
         self._put(stage, artifact)
@@ -197,7 +225,7 @@ class RemoteArtifactStore:
     def load_compatible(self, stage: str, snapshot_id: str | None = None, model: str | None = None) -> dict | None:
         """Return only stage data matching the current period/snapshot/model contract."""
         artifact = self.artifacts.get(stage)
-        if artifact is None and stage == "collector":
+        if artifact is None and stage == Stage.COLLECTOR:
             artifact = self.artifacts.get("snapshot", {}).get("collector_artifact")
         if (
             not isinstance(artifact, dict)

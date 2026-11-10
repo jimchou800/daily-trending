@@ -13,6 +13,8 @@ The Beijing `qwen3.8-max` standard list price is CNY 12 per million input tokens
 
 `max_tokens` excludes reasoning for this model. The adapter sends `max_completion_tokens` (default 1800), which covers reasoning plus answer. The parameter documentation explicitly allows actual output to differ by up to 10 tokens, so the reservation includes 1810 output tokens by default.
 
+For the selected `qwen3.8-max`, raw HTTP requests also send top-level `enable_thinking:false`, so the bounded completion allowance serves the JSON answer. Custom remote model IDs do not receive this model-specific field. The HTTP timeout defaults to 120 seconds, configurable from 1 to 180 seconds; the publication deadline is still checked before dispatch and before publication. A timeout does not refund the call or authorize late publication.
+
 Before each attempt, including a retry:
 
 ```
@@ -25,6 +27,8 @@ reserved_CNY = max(calculated_CNY, configured_estimated_call_cost_floor)
 The entire message includes instructions, source material, JSON/schema text and separators. The extra 256 input tokens explicitly allow for chat-template/service overhead. UTF-8 bytes plus 256 is a local conservative assumption, not a provider-guaranteed tokenizer bound: no exact tokenizer/chat-template accounting guarantee was found in the primary documentation. A single character can occupy multiple UTF-8 bytes. Do not equate character limits with input tokens. The adapter validates numeric limits and uses the calculated reservation even when the configured floor is zero. Reservation is made before transport via the existing no-argument reservation hook, allowing the pipeline to persist it before HTTP.
 
 All reservations are retained even on timeout or malformed output; a low reported usage does not refund them. Real HTTP responses must report valid nonnegative integer prompt/completion usage. Only allowlisted numeric usage fields and status are recorded, never arbitrary response data, request text or credentials. Missing, invalid or inconsistent real usage, or reported token counts above either estimate, block further calls. An injected fixture transport may omit usage for existing offline samples; this exemption does not apply to real HTTP. Persistence of this accounting-stop state and usage records across process restarts is part of the pipeline integration contract.
+
+In hosted operation a provider transport exception is settled at the full reserved bound with `usage_status:unavailable` before a separately reserved retry is allowed. This is a conservative charge, not measured provider usage. The ledger's legacy `actual_micros` field holds that full bound for unavailable outcomes and the measured cost for `reported` outcomes. Invalid or underestimated returned usage still blocks the month; a lost settlement acknowledgement blocks further dispatch. Unresolved reservations after runner loss remain pending and require accounting recovery; they are never refunded automatically.
 
 ## Normal workflow baseline
 

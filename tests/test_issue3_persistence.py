@@ -11,6 +11,35 @@ from daily_trending.dashscope import DashScopeClient, DashScopeConfig
 
 
 class PersistenceTests(unittest.TestCase):
+    def test_previous_prompt_cache_cannot_restore_sources_verdicts_details_or_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ArtifactStore(Path(directory), "2026-11-09")
+            keys = ["source:sample/ui", "relevance:sample/ui", "sample/ui"]
+            old_cache = {
+                key: {
+                    "contract_version": "1.0",
+                    "schema": "2",
+                    "snapshot_id": "abc",
+                    "model": "model",
+                    "analysis": {"repository": key, "is_ai": True, "ai_relevance_evidence": "agent ready"},
+                }
+                for key in keys
+            }
+            (store.directory / "analysis-cache.json").write_text(json.dumps(old_cache), encoding="utf-8")
+            for key in keys:
+                self.assertIsNone(store.load_analysis(key, "abc", "model"))
+            store.save(
+                "analyzer",
+                {
+                    "contract_version": "1.0",
+                    "period_id": "2026-11-09",
+                    "snapshot_id": "abc",
+                    "analysis_schema": "2",
+                    "stage": {"name": "analyzer", "status": "succeeded"},
+                },
+            )
+            self.assertIsNone(store.load_compatible("analyzer", "abc"))
+
     def test_interrupted_or_failed_runs_consume_only_two_resumptions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

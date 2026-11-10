@@ -93,7 +93,13 @@ def paid_response(payload, _key):
     if "classifications" in prompt.split("\n", 1)[0]:
         result = {
             "classifications": [
-                {"repository": e["repository"], "is_ai": True, "ai_relevance_evidence": "AI workflow"} for e in entries
+                {
+                    "repository": e["repository"],
+                    "is_ai": True,
+                    "ai_relevance_evidence": "Build AI agents",
+                    "ai_core_purpose": "tool",
+                }
+                for e in entries
             ]
         }
     else:
@@ -101,7 +107,7 @@ def paid_response(payload, _key):
         result = dict(
             repository=entry["repository"],
             is_ai=True,
-            ai_relevance_evidence="AI workflow",
+            ai_relevance_evidence="Build AI agents",
             project_type="工具",
             introduction="AI 工作流",
             problem_solved="自动处理",
@@ -118,6 +124,22 @@ def paid_response(payload, _key):
 
 
 class HostedTests(unittest.TestCase):
+    def test_remote_previous_prompt_cache_and_analyzer_stage_are_incompatible(self):
+        http = AuthorityHTTP()
+        for repo in ("source:sample/ui", "relevance:sample/ui", "sample/ui"):
+            http.data["artifacts"][f"analysis:snapshot:{repo}:model:1:1"] = {"repository": repo, "is_ai": True}
+        http.data["artifacts"]["analyzer"] = {
+            "contract_version": "1.0",
+            "period_id": PERIOD,
+            "snapshot_id": "snapshot",
+            "analysis_schema": "2",
+            "stage": {"name": "analyzer", "status": "succeeded"},
+        }
+        store = RemoteArtifactStore(authority(http), PERIOD, 1)
+        for repo in ("source:sample/ui", "relevance:sample/ui", "sample/ui"):
+            self.assertIsNone(store.load_analysis(repo, "snapshot", "model"))
+        self.assertIsNone(store.load_compatible("analyzer", "snapshot"))
+
     def test_model_timeout_settles_full_reservation_before_a_separately_charged_retry(self):
         http = AuthorityHTTP()
         dispatches = 0
@@ -339,7 +361,7 @@ class HostedRunnerTests(unittest.TestCase):
             client=client,
             clock=lambda: NOW,
             fetch=lambda _: Path("tests/fixtures/trending_page.html").read_text(encoding="utf-8"),
-            source_loader=lambda _: {"readme": "AI workflow"},
+            source_loader=lambda _: {"readme": "Build AI agents"},
             **kwargs,
         )
 
@@ -417,7 +439,7 @@ class HostedRunnerTests(unittest.TestCase):
                 client=client,
                 clock=lambda: instant[0],
                 fetch=lambda _: Path("tests/fixtures/trending_page.html").read_text(encoding="utf-8"),
-                source_loader=lambda _: {"readme": "AI workflow"},
+                source_loader=lambda _: {"readme": "Build AI agents"},
             )
         self.assertEqual(len(http.data["reservations"]), 1)
         self.assertEqual(next(iter(http.data["reservations"].values()))["actual_micros"], 840)

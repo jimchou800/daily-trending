@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from .contracts import CONTRACT_VERSION, require_date
+from .persistence import ANALYSIS_SCHEMA_VERSION
 from .dashscope import (
     BudgetExceeded,
     CHAT_INPUT_OVERHEAD,
@@ -21,8 +22,8 @@ from .dashscope import (
 
 MICROS_PER_CNY = 1_000_000
 MAX_AUTHORITY_RESPONSE_BYTES = 4 * 1024 * 1024
-CACHE_PROMPT_VERSION = "1"
-CACHE_SCHEMA_VERSION = "1"
+CACHE_PROMPT_VERSION = "2"
+CACHE_SCHEMA_VERSION = ANALYSIS_SCHEMA_VERSION
 
 
 class RemoteAuthority:
@@ -236,6 +237,8 @@ class RemoteArtifactStore:
         if snapshot_id is not None and artifact.get("snapshot_id") != snapshot_id:
             return None
         if model is not None and artifact.get("model") != model:
+            return None
+        if stage == Stage.ANALYZER and artifact.get("analysis_schema") != ANALYSIS_SCHEMA_VERSION:
             return None
         return artifact
 

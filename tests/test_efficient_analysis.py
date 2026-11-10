@@ -1,9 +1,10 @@
-﻿import json
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from daily_trending.analyzer import analyze_live_snapshot
+from daily_trending.analysis_prompts import relevance_context, detail_prompt
 from daily_trending.collector import collect_snapshot
 from daily_trending.dashscope import DashScopeClient, DashScopeConfig
 from daily_trending.persistence import ArtifactStore
@@ -45,7 +46,8 @@ class EfficientAnalysisTests(unittest.TestCase):
                         {
                             "repository": e["repository"],
                             "is_ai": self.verdict,
-                            "ai_relevance_evidence": "AI workflow" if self.verdict is not None else "",
+                            "ai_relevance_evidence": "Build AI agents" if self.verdict is not None else "",
+                            "ai_core_purpose": "tool" if self.verdict else None,
                         }
                         for e in data
                     ]
@@ -58,7 +60,7 @@ class EfficientAnalysisTests(unittest.TestCase):
             result = {
                 "repository": e["repository"],
                 "is_ai": True,
-                "ai_relevance_evidence": "AI workflow",
+                "ai_relevance_evidence": "Build AI agents",
                 "project_type": "tool",
                 "introduction": "intro",
                 "problem_solved": "problem",
@@ -72,8 +74,78 @@ class EfficientAnalysisTests(unittest.TestCase):
     def run_analysis(self, snapshot, **kwargs):
         client = DashScopeClient(api_key="test", transport=self.transport, config=DashScopeConfig(max_retries=0))
         return analyze_live_snapshot(
-            snapshot, client, kwargs.pop("loader", lambda _: {"readme": "AI workflow"}), **kwargs
+            snapshot, client, kwargs.pop("loader", lambda _: {"readme": "Build AI agents"}), **kwargs
         )
+
+    def test_agent_ready_design_system_is_excluded_despite_model_positive(self):
+        self.classification_transform = lambda values: [
+            dict(v, ai_core_purpose="tool", ai_relevance_evidence="agent ready") for v in values
+        ]
+        result = self.run_analysis(
+            self.snapshot(1),
+            loader=lambda _: {
+                "metadata": {"description": "A design system for building interfaces, agent ready."},
+                "readme": '<!-- build metadata -->\n<div align="center"><img src="badge.svg"></div>\n'
+                "A design system for building interfaces, agent ready.",
+            },
+        )
+        self.assertEqual(result["stage"]["status"], "succeeded")
+        self.assertEqual(result["analyses"], [])
+        self.assertEqual(result["selection"][0]["reason"], "unknown_relevance")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_readme_prose_survives_leading_comments_badges_and_html(self):
+        entry = self.snapshot(1)["snapshot"]["entries"][0]
+        quote = "Skills teach Claude how to complete specific tasks."
+        source = {
+            "readme": "<!--" + ("generated header " * 100) + "-->\n"
+            '<div align="center"><img alt="agent ready" src="badge.svg"></div>\n'
+            "[![build](badge.svg)](https://example.test)\n# Skills\n" + quote
+        }
+        context = relevance_context(entry, source)
+        self.assertIn(quote, context["readme"])
+        self.assertNotIn("generated header", context["readme"])
+        self.assertNotIn("agent ready", context["readme"])
+        self.assertIn(quote, json.loads(detail_prompt(entry, source).split("\n", 1)[1])[0]["readme"])
+
+    def test_core_ai_tools_learning_and_collections_remain_eligible(self):
+        examples = [
+            ("tool", "Skills teach Claude how to complete specific tasks."),
+            ("tutorial", "通过本教程学习训练大模型。"),
+            ("course", "机器学习课程，讲解模型训练与推理。"),
+            ("resource_collection", "人工智能学习资料合集，收录课程与模型工具。"),
+            ("infrastructure", "Serve language models with GPU inference."),
+        ]
+        for purpose, quote in examples:
+            with self.subTest(purpose=purpose):
+                self.calls.clear()
+                self.classification_transform = lambda values: [
+                    dict(v, ai_core_purpose=purpose, ai_relevance_evidence=quote) for v in values
+                ]
+                result = self.run_analysis(self.snapshot(1), loader=lambda _: {"readme": quote})
+                self.assertEqual([a["rank"] for a in result["analyses"]], [1])
+                self.assertEqual(result["analyses"][0]["ai_relevance_evidence"], quote)
+                self.assertEqual(len(self.calls), 2)
+
+    def test_compatibility_and_ai_assisted_development_are_not_core_purpose(self):
+        for quote in ("AI-compatible components", "Built using Claude", "使用AI开发", "AI友好"):
+            with self.subTest(quote=quote):
+                self.calls.clear()
+                self.classification_transform = lambda values: [
+                    dict(v, ai_core_purpose="tool", ai_relevance_evidence=quote) for v in values
+                ]
+                result = self.run_analysis(self.snapshot(1), loader=lambda _: {"readme": quote})
+                self.assertEqual(result["stage"]["status"], "succeeded")
+                self.assertEqual(result["analyses"], [])
+                self.assertEqual(result["selection"][0]["reason"], "unknown_relevance")
+                self.assertEqual(len(self.calls), 1)
+
+    def test_positive_without_core_purpose_is_conservatively_unknown(self):
+        self.classification_transform = lambda values: [dict(v, ai_core_purpose=None) for v in values]
+        result = self.run_analysis(self.snapshot(1))
+        self.assertEqual(result["selection"][0]["reason"], "unknown_relevance")
+        self.assertEqual(result["analyses"], [])
+        self.assertEqual(len(self.calls), 1)
 
     def test_all_candidates_classified_then_repeat_filter_before_five_details(self):
         snapshot = self.snapshot()
@@ -148,7 +220,9 @@ class EfficientAnalysisTests(unittest.TestCase):
         self.assertEqual(self.calls[0][1][0]["repository"], "acme/p0")
 
     def test_large_multibyte_sources_fit_both_input_byte_budgets(self):
-        result = self.run_analysis(self.snapshot(), loader=lambda _: {"readme": "AI workflow" + ('中文\\"' * 20000)})
+        result = self.run_analysis(
+            self.snapshot(), loader=lambda _: {"readme": "Build AI agents" + ('中文\\"' * 20000)}
+        )
         self.assertEqual(len(result["analyses"]), 5)
         self.assertLessEqual(len(self.calls[0][0].encode("utf-8")), 8000)
         self.assertTrue(all(len(prompt.encode("utf-8")) <= 6000 for prompt, _ in self.calls[1:]))
@@ -159,7 +233,9 @@ class EfficientAnalysisTests(unittest.TestCase):
         header = self.calls[0][0].split("\n", 1)[0]
         examples = json.loads(header.split("JSON示例：", 1)[1])["classifications"]
         self.assertEqual([e["is_ai"] for e in examples], [True, False, None])
-        self.assertTrue(all(set(e) == {"repository", "is_ai", "ai_relevance_evidence"} for e in examples))
+        self.assertTrue(
+            all(set(e) == {"repository", "is_ai", "ai_relevance_evidence", "ai_core_purpose"} for e in examples)
+        )
         self.assertEqual(examples[-1]["ai_relevance_evidence"], "")
 
     def test_source_failure_is_incomplete_even_when_other_repository_is_non_ai(self):
@@ -168,7 +244,7 @@ class EfficientAnalysisTests(unittest.TestCase):
         def loader(entry):
             if entry["rank"] == 1:
                 raise OSError("GitHub unavailable")
-            return {"readme": "AI workflow"}
+            return {"readme": "Build AI agents"}
 
         result = self.run_analysis(self.snapshot(2), loader=loader)
         self.assertEqual(result["stage"]["status"], "failed")

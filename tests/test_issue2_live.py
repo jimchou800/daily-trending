@@ -309,7 +309,7 @@ class DashScopeTests(unittest.TestCase):
             if "classifications" in payload["messages"][0]["content"].split("\n", 1)[0]:
                 data = classification_response(payload, is_ai=False, evidence="AI tool")
                 value = json.loads(data["choices"][0]["message"]["content"])
-                value["classifications"][0]["is_ai"] = True
+                value["classifications"][0].update(is_ai=True, ai_core_purpose="tool")
                 data["choices"][0]["message"]["content"] = json.dumps(value)
                 return data
             repository = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])[0]["repository"]

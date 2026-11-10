@@ -5,6 +5,7 @@ from __future__ import annotations
 from .contracts import SelectionOutcome, SelectionReason, Stage, Status
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -13,7 +14,7 @@ from .dashscope import DashScopeClient, BudgetExceeded
 from .analysis_prompts import relevance_context, relevance_batches, detail_prompt
 from .selection import filter_repeat_entries
 from .github_sources import load_github_sources
-from .persistence import ArtifactStore
+from .persistence import ANALYSIS_SCHEMA_VERSION, ArtifactStore
 
 
 def analyze_snapshot(snapshot: dict, response_path: Path, expected_period: str | None = None) -> dict:
@@ -287,7 +288,7 @@ def analyze_live_snapshot(
         "contract_version": CONTRACT_VERSION,
         "period_id": snapshot["period_id"],
         "snapshot_id": sid,
-        "analysis_schema": "2",
+        "analysis_schema": ANALYSIS_SCHEMA_VERSION,
         "stage": {"name": Stage.ANALYZER, "status": status, "errors": errors},
         "snapshot": {key: source[key] for key in ("source_url", "scope", "collected_at")},
         "analyses": analyses,
@@ -311,6 +312,23 @@ def _validate_relevance(response: dict, context: dict) -> None:
             bool(evidence.strip()) and any(evidence in context[key] for key in ("description", "readme")),
             "relevance evidence is not a provided source quote",
         )
+
+    if verdict is True:
+        # These claims describe compatibility or how software was developed, not
+        # its core function. A grounded quote alone does not make them AI evidence.
+        weak_claim = re.search(
+            r"(?:agent|ai)[ -]?(?:ready|compatible|friendly)|"
+            r"(?:built|developed|coded|written) (?:with|using|by) (?:ai|claude|copilot)|"
+            r"(?:AI|智能体|大模型)(?:友好|兼容)|(?:使用|借助)(?:AI|Claude|Copilot)(?:开发|编写)",
+            evidence,
+            re.IGNORECASE,
+        )
+        if (
+            response.get("ai_core_purpose")
+            not in {"model", "application", "tool", "infrastructure", "tutorial", "course", "resource_collection"}
+            or weak_claim
+        ):
+            response.update(is_ai=None, ai_relevance_evidence="", ai_core_purpose=None)
 
 
 def _validated_entry(snapshot: dict, entry: dict, response: dict) -> dict:

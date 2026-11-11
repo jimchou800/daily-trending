@@ -2,7 +2,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-
 from daily_trending.analyzer import analyze_live_snapshot
 from daily_trending.analysis_prompts import relevance_context, detail_prompt
 from daily_trending.collector import collect_snapshot
@@ -32,6 +31,7 @@ class EfficientAnalysisTests(unittest.TestCase):
             for i in range(count)
         ]
         path = self.root / "snapshot.json"
+        print(path)
         path.write_text(json.dumps({"complete": True, "entries": entries}), encoding="utf-8")
         return collect_snapshot(path, "2026-11-09", "2026-11-09T00:30:00Z")
 
@@ -103,6 +103,7 @@ class EfficientAnalysisTests(unittest.TestCase):
             "[![build](badge.svg)](https://example.test)\n# Skills\n" + quote
         }
         context = relevance_context(entry, source)
+        print(context)
         self.assertIn(quote, context["readme"])
         self.assertNotIn("generated header", context["readme"])
         self.assertNotIn("agent ready", context["readme"])

@@ -276,6 +276,7 @@ class HostedTests(unittest.TestCase):
         req = opened.call_args.args[0]
         self.assertEqual(req.get_header("Authorization"), "Bearer private-token")
         self.assertEqual(req.get_header("X-installation-id"), "installation")
+        self.assertEqual(req.get_header("User-agent"), "daily-trending/1.0")
         self.assertNotIn("private-token", req.full_url)
 
     def test_snapshot_survives_lost_collector_write_and_local_directory_loss(self):

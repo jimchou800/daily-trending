@@ -224,3 +224,6 @@ __marimo__/
 
 # Local verification report (CI uploads its own copy)
 coverage.json
+
+.vscode/
+.daily-trending-state/

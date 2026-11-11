@@ -42,10 +42,7 @@ def run_hosted_daily(
 
     def check_period() -> None:
         now = clock()
-        if (
-            now.tzinfo is None
-            or now.astimezone(BEIJING).date().isoformat() != period
-        ):
+        if now.tzinfo is None or now.astimezone(BEIJING).date().isoformat() != period:
             raise ValueError("hosted publication must target the current Beijing date")
 
     check_period()

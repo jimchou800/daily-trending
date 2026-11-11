@@ -126,11 +126,11 @@ describe.each([false, true])(
     });
     it.each([
       ["2026-11-10", "2026-11-10T00:59:59Z", true],
-      ["2026-11-10", "2026-11-10T01:00:00Z", false],
-      ["2026-11-10", "not-a-date", false],
+      ["2026-11-10", "2026-11-10T01:00:00Z", true],
+      ["2026-11-10", "not-a-date", true],
       ["2026-11-09", "2026-11-09T00:30:00Z", false],
     ])(
-      "uses actual on-time publication metadata %s/%s",
+      "uses same-day publication metadata %s/%s",
       (date, published, hidden) => {
         const page = browser("2026-11-10T01:00:00Z", date, published);
         expect(page.failure.hidden).toBe(hidden);

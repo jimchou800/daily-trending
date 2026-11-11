@@ -15,7 +15,7 @@ from uuid import uuid4
 from .dashscope import BudgetExceeded, DashScopeClient
 from .hosted import RemoteArtifactStore, RemoteAuthority, RemoteModelTransport
 from .pipeline import run_live_pipeline
-from .scheduler import BEIJING, MAX_ATTEMPTS, publication_deadline
+from .scheduler import BEIJING, MAX_ATTEMPTS
 
 
 def run_hosted_daily(
@@ -40,25 +40,23 @@ def run_hosted_daily(
         raise ValueError("hosted clock must be timezone-aware")
     period = current.astimezone(BEIJING).date().isoformat()
 
-    def check_deadline() -> None:
+    def check_period() -> None:
         now = clock()
         if (
             now.tzinfo is None
             or now.astimezone(BEIJING).date().isoformat() != period
-            or now >= publication_deadline(period)
         ):
-            raise TimeoutError("hosted publication deadline has passed")
+            raise ValueError("hosted publication must target the current Beijing date")
 
-    check_deadline()
+    check_period()
     client = client or DashScopeClient()
     original_guard, original_transport = client.before_call, client.transport
 
-    def recover_transport(operation: Callable, *, allow_late: bool = False):
+    def recover_transport(operation: Callable):
         # Reads and idempotent admission may be replayed, never a new run identity
         # or a paid model dispatch. Bound recovery even when the server is down.
         for recovery in range(MAX_ATTEMPTS):
-            if not allow_late:
-                check_deadline()
+            check_period()
             try:
                 return operation()
             except OSError:
@@ -72,7 +70,7 @@ def run_hosted_daily(
     last_error: Exception | None = None
     try:
         for attempt in range(MAX_ATTEMPTS):
-            check_deadline()
+            check_period()
             # begin is server-persisted and rejects a fourth distinct attempt,
             # even after a runner restart or overlapping scheduler delivery.
             token = recover_transport(
@@ -85,7 +83,7 @@ def run_hosted_daily(
             client.transport = RemoteModelTransport(authority, period, fence, original_transport)
 
             def guard() -> None:
-                check_deadline()
+                check_period()
                 if original_guard:
                     original_guard()
                 # The local monetary guard runs before the remote transport.
@@ -120,10 +118,10 @@ def run_hosted_daily(
                     artifact_store=store,
                     history=store.remote["history"],
                 )
-                check_deadline()
+                check_period()
                 report = json.loads(result.report_path.read_text(encoding="utf-8"))
                 staged = authority.call("stage", {"period": period, "fence": fence, "report": report})
-                check_deadline()
+                check_period()
                 publication = authority.call("publish", {"period": period, "fence": fence, "hash": staged["hash"]})
                 return publication["report"]
             except BudgetExceeded:
@@ -132,7 +130,7 @@ def run_hosted_daily(
                 last_error = exc
                 # Lost publication acknowledgement can be recovered even after
                 # cutoff, without replaying generation or mutating the archive.
-                recovered = recover_transport(lambda: authority.state(period), allow_late=True)
+                recovered = recover_transport(lambda: authority.state(period))
                 if recovered.get("publication") is not None:
                     return recovered["publication"]
         raise RuntimeError("hosted generation attempts exhausted") from last_error
@@ -141,19 +139,42 @@ def run_hosted_daily(
 
 
 def main() -> int:
-    """Run from secret environment bindings without logging credentials or payloads."""
+    """读取密钥环境变量运行托管任务，并输出不含私密载荷的失败诊断。"""
+    authority: RemoteAuthority | None = None
     try:
+        base_url = os.environ["PUBLICATION_BASE_URL"]
+        token = os.environ["PUBLICATION_AUTOMATION_TOKEN"]
+        installation = os.environ["PUBLICATION_INSTALLATION_ID"]
         authority = RemoteAuthority(
-            os.environ["PUBLICATION_BASE_URL"],
-            os.environ["PUBLICATION_AUTOMATION_TOKEN"],
-            os.environ["PUBLICATION_INSTALLATION_ID"],
+            base_url,
+            token,
+            installation,
         )
         with tempfile.TemporaryDirectory(prefix="daily-trending-") as directory:
             report = run_hosted_daily(authority, Path(directory), run_id=os.environ.get("GITHUB_RUN_ID"))
-        print(f"Published /archive/{report['report_date']}/")
+        print(f"已发布 /archive/{report['report_date']}/")
         return 0
-    except Exception:
-        print("Hosted daily publication failed; inspect private authority state.", file=sys.stderr)
+    except Exception as exc:
+        print("托管日报发布失败；请检查私有权威状态。", file=sys.stderr)
+        failure_type = "配置" if isinstance(exc, KeyError) else type(exc).__name__
+        print(f"失败类型：{failure_type}", file=sys.stderr)
+        if authority is not None:
+            period = datetime.now(BEIJING).date().isoformat()
+            try:
+                state = authority.state(period)
+                month = state.get("month") if isinstance(state.get("month"), dict) else {}
+                print(
+                    "权威摘要："
+                    f"period={period} attempts={state.get('attempts', '?')} "
+                    f"fence={state.get('fence', '?')} "
+                    f"publication={'present' if state.get('publication') is not None else 'absent'} "
+                    f"reservations={len(state.get('reservations', {})) if isinstance(state.get('reservations'), dict) else '?'} "
+                    f"accounting_blocked={month.get('accounting_blocked', '?')} "
+                    f"generation_exhausted={month.get('generation_exhausted', '?')}",
+                    file=sys.stderr,
+                )
+            except Exception as state_exc:
+                print(f"权威摘要不可用：{type(state_exc).__name__}", file=sys.stderr)
         return 1
 
 

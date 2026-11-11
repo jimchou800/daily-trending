@@ -105,14 +105,14 @@ describe("durable admission", () => {
       },
     });
   });
-  it("rejects old dates and cutoff starts", async () => {
+  it("rejects old dates but allows same-day starts after nine", async () => {
     expect(
       (await call("begin", { period: "2026-11-09", run_id: "a" })).status,
     ).toBe(409);
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T01:00:00Z"));
     expect(
       (await call("begin", { period: "2026-11-10", run_id: "a" })).status,
-    ).toBe(409);
+    ).toBe(200);
   });
   it("reserves before dispatch, conserves monthly cap, rejects stale fencing", async () => {
     const begin = (await (
@@ -741,7 +741,7 @@ describe("cutoff, crash recovery and ledger integrity", () => {
       publication: { published_at: "2026-11-10T00:16:00.000Z" },
     });
   });
-  it("rolls back tentative publication when sync crosses the cutoff", async () => {
+  it("keeps tentative publication when sync crosses nine", async () => {
     const fence = await prepare();
     const { hash } = (await (
       await call("stage", { period: "2026-11-10", fence, report })
@@ -765,17 +765,17 @@ describe("cutoff, crash recovery and ledger integrity", () => {
     );
     expect(
       (await call("publish", { period: "2026-11-10", fence, hash })).status,
-    ).toBe(409);
+    ).toBe(200);
     const state = await (
       await call("state?period=2026-11-10", undefined, "GET")
     ).json();
-    expect(state).toMatchObject({ history: [], publication: null });
-    expect(await (await SELF.fetch("https://example.com/")).text()).toContain(
-      "今日日报生成失败",
-    );
+    expect(state).toMatchObject({ history: [{ report_date: "2026-11-10" }] });
+    expect(
+      await (await SELF.fetch("https://example.com/")).text(),
+    ).not.toContain("今日日报生成失败");
     expect(
       (await SELF.fetch("https://example.com/archive/2026-11-10/")).status,
-    ).toBe(404);
+    ).toBe(200);
   });
   it("reconciles crashed intents before any public read even after the deadline", async () => {
     await prepare();
@@ -1226,7 +1226,7 @@ describe("validated state limits and exposure gates", () => {
       ).json(),
     ).toEqual({ error: "all_analyses_failed" });
   });
-  it("retains prior content and history when final confirmation sync crosses cutoff", async () => {
+  it("retains prior content and history when final confirmation sync crosses nine", async () => {
     const fence = await prepare();
     const { hash } = (await (
       await call("stage", { period: "2026-11-10", fence, report })
@@ -1252,10 +1252,10 @@ describe("validated state limits and exposure gates", () => {
       await (
         await call("publish", { period: "2026-11-10", fence, hash })
       ).json(),
-    ).toEqual({ error: "deadline_crossed" });
+    ).toMatchObject({ report: { report_date: "2026-11-10" } });
     expect(
       await (await call("state?period=2026-11-10", undefined, "GET")).json(),
-    ).toMatchObject({ history: [], publication: null });
+    ).toMatchObject({ history: [{ report_date: "2026-11-10" }] });
   });
   it("blocks public requests while the publication persistence barrier is unresolved", async () => {
     const fence = await prepare();

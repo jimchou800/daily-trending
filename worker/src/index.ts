@@ -649,6 +649,11 @@ export class PublicationAuthority extends DurableObject<Env> {
       }
     });
     await this.ctx.storage.sync();
+    if (!correction && period !== today()) {
+      this.ctx.storage.transactionSync(() => this.rollback(intent));
+      await this.ctx.storage.sync();
+      throw new Fault(409, "date_crossed");
+    }
     intent.confirmation = {
       hash,
       observed_at: Date.now(),
@@ -667,6 +672,11 @@ export class PublicationAuthority extends DurableObject<Env> {
       this.write("intent", intent);
     });
     await this.ctx.storage.sync();
+    if (!correction && period !== today()) {
+      this.ctx.storage.transactionSync(() => this.rollback(intent));
+      await this.ctx.storage.sync();
+      throw new Fault(409, "date_crossed");
+    }
     return Response.json({
       report: canonical,
       url: `/archive/${period}/`,

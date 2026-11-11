@@ -1,5 +1,9 @@
 # Hosted publication authority
 
+## 2026-11-11 当前协议修订
+
+经发起人授权，普通托管操作仅校验本期为服务器当前北京时间日期，不再校验 09:00 截止点或五秒余量。快照仍须当天实际采集且不能来自未来。发布在持久化等待后再次校验日期；跨日回滚，确认回执必须与内容哈希匹配且时间属于该期日期、有限并且不晚于服务器当前时间。下文旧版的截止点拒绝与回滚条件由本节替换；预算、认证、栅栏、固定快照与幂等保持适用。
+
 The Python generator uses a Cloudflare Worker and one stable named SQLite Durable Object as the authoritative private ledger and public HTML origin. The Worker does not execute models, fetch news, provide a public data API, accept public generation requests, or introduce reader accounts. `worker/` is a separate, strictly typed TypeScript toolchain; Python gates remain separate.
 
 ## Local verification

@@ -770,9 +770,9 @@ describe("cutoff, crash recovery and ledger integrity", () => {
       await call("state?period=2026-11-10", undefined, "GET")
     ).json();
     expect(state).toMatchObject({ history: [{ report_date: "2026-11-10" }] });
-    expect(
-      await (await SELF.fetch("https://example.com/")).text(),
-    ).not.toContain("今日日报生成失败");
+    expect(await (await SELF.fetch("https://example.com/")).text()).toMatch(
+      /id="today-status"[^>]* hidden>/,
+    );
     expect(
       (await SELF.fetch("https://example.com/archive/2026-11-10/")).status,
     ).toBe(200);
@@ -842,7 +842,7 @@ describe("cutoff, crash recovery and ledger integrity", () => {
   it.each([
     {
       hash: "tentative",
-      observed_at: Date.parse("2026-11-10T01:00:00Z"),
+      observed_at: Date.parse("2026-11-10T01:02:00Z"),
       mode: "daily",
     },
     {
@@ -869,18 +869,18 @@ describe("cutoff, crash recovery and ledger integrity", () => {
       await (await call("state?period=2026-11-10", undefined, "GET")).json(),
     ).toMatchObject({ history: [], publication: null });
   });
-  it("rejects publications inside safety margin and unfinished stages remain private", async () => {
+  it("九点前后均可发布且暂存产物保持私有", async () => {
     const fence = await prepare();
     const { hash } = (await (
       await call("stage", { period: "2026-11-10", fence, report })
     ).json()) as { hash: string };
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-10T00:59:56Z"));
-    expect(
-      (await call("publish", { period: "2026-11-10", fence, hash })).status,
-    ).toBe(409);
     expect(await (await SELF.fetch("https://example.com/")).text()).toContain(
       "尚未发布",
     );
+    expect(
+      (await call("publish", { period: "2026-11-10", fence, hash })).status,
+    ).toBe(200);
   });
   it("fails closed on deleted monthly state and malformed identity state", async () => {
     await prepare();

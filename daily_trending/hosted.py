@@ -69,6 +69,7 @@ class RemoteAuthority:
                 "Authorization": f"Bearer {self.token}",
                 "X-Installation-ID": self.installation,
                 "Content-Type": "application/json",
+                "User-Agent": "daily-trending/1.0",
             },
         )
         with urlopen(request, timeout=30) as response:

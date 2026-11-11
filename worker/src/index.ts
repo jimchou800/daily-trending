@@ -93,12 +93,8 @@ function today(): string {
 function deadline(period: string): number {
   return Date.parse(period + "T01:00:00Z");
 }
-function before(period: string, margin = 0): void {
-  need(
-    period === today() && Date.now() < deadline(period) - margin,
-    "deadline_or_date",
-    409,
-  );
+function before(period: string): void {
+  need(period === today(), "date_or_period", 409);
 }
 function json(value: unknown): string {
   return JSON.stringify(value);
@@ -137,6 +133,7 @@ function snapshotValid(
   period: string,
   maintenance = false,
 ): RecordValue {
+  void maintenance;
   const snap = object(value);
   need(
     snap.complete === true &&
@@ -146,7 +143,6 @@ function snapshotValid(
   const collected = timestamp(snap.collected_at);
   need(
     new Date(collected + 8 * 3600000).toISOString().slice(0, 10) === period &&
-      (maintenance || collected < deadline(period)) &&
       collected <= Date.now(),
     "snapshot_time",
   );
@@ -603,7 +599,7 @@ export class PublicationAuthority extends DurableObject<Env> {
   ): Promise<Response> {
     const checkAdmission = () => {
       if (maintenance) need(period === today(), "maintenance_date", 409);
-      else if (!correction) before(period, 5000);
+      else if (!correction) before(period);
     };
     checkAdmission();
     const previous = this.read<Issue>("issue:" + period),
@@ -653,13 +649,10 @@ export class PublicationAuthority extends DurableObject<Env> {
       }
     });
     await this.ctx.storage.sync();
-    if (
-      !correction &&
-      (period !== today() || (!maintenance && Date.now() >= deadline(period)))
-    ) {
+    if (!correction && period !== today()) {
       this.ctx.storage.transactionSync(() => this.rollback(intent));
       await this.ctx.storage.sync();
-      throw new Fault(409, "deadline_crossed");
+      throw new Fault(409, "date_crossed");
     }
     intent.confirmation = {
       hash,
@@ -679,13 +672,10 @@ export class PublicationAuthority extends DurableObject<Env> {
       this.write("intent", intent);
     });
     await this.ctx.storage.sync();
-    if (
-      !correction &&
-      (period !== today() || (!maintenance && Date.now() >= deadline(period)))
-    ) {
+    if (!correction && period !== today()) {
       this.ctx.storage.transactionSync(() => this.rollback(intent));
       await this.ctx.storage.sync();
-      throw new Fault(409, "deadline_crossed");
+      throw new Fault(409, "date_crossed");
     }
     return Response.json({
       report: canonical,
@@ -764,7 +754,7 @@ export class PublicationAuthority extends DurableObject<Env> {
                 .slice(0, 10) === pending.period &&
                 (receipt.mode === "maintenance" ||
                   (receipt.mode === "daily" &&
-                    receipt.observed_at < deadline(pending.period)))));
+                    receipt.observed_at <= Date.now()))));
           this.ctx.storage.transactionSync(() => {
             if (confirmed) this.remove("intent");
             else this.rollback(pending);
@@ -790,10 +780,7 @@ export class PublicationAuthority extends DurableObject<Env> {
               : "<h1>AI 开源项目热点日报</h1><p>尚未发布</p>";
             const missing =
               Date.now() >= deadline(today()) &&
-              (!report ||
-                report.report_date !== today() ||
-                (timestamp(report.published_at) >= deadline(today()) &&
-                  !report.maintenance_publication));
+              (!report || report.report_date !== today());
             const month = today().slice(0, 7);
             const exhausted =
               this.read<Month>("month:" + month)?.generation_exhausted === true;

@@ -16,6 +16,7 @@ from daily_trending.scheduler import BEIJING
 
 PERIOD = "2026-11-10"
 NOW = datetime(2026, 11, 10, 8, 15, tzinfo=BEIJING)
+LATE_NOW = datetime(2026, 11, 10, 15, 30, tzinfo=BEIJING)
 
 
 class AuthorityHTTP:
@@ -275,6 +276,7 @@ class HostedTests(unittest.TestCase):
         req = opened.call_args.args[0]
         self.assertEqual(req.get_header("Authorization"), "Bearer private-token")
         self.assertEqual(req.get_header("X-installation-id"), "installation")
+        self.assertEqual(req.get_header("User-agent"), "daily-trending/1.0")
         self.assertNotIn("private-token", req.full_url)
 
     def test_snapshot_survives_lost_collector_write_and_local_directory_loss(self):
@@ -380,6 +382,7 @@ class HostedRunnerTests(unittest.TestCase):
         self.assertEqual(http.data["reservations"], {})
 
     def run_job(self, http, directory, **kwargs):
+        clock = kwargs.pop("clock", lambda: NOW)
         client = DashScopeClient(
             api_key="private-model-key",
             transport=paid_response,
@@ -389,7 +392,7 @@ class HostedRunnerTests(unittest.TestCase):
             authority(http),
             Path(directory),
             client=client,
-            clock=lambda: NOW,
+            clock=clock,
             fetch=lambda _: Path("tests/fixtures/trending_page.html").read_text(encoding="utf-8"),
             source_loader=lambda _: {"readme": "Build AI agents"},
             **kwargs,
@@ -438,21 +441,47 @@ class HostedRunnerTests(unittest.TestCase):
         self.assertEqual(len(http.data["reservations"]), paid_count)
         self.assertIsNone(http.data["publication"])
 
-    def test_late_and_naive_jobs_never_contact_authority(self):
-        remote = authority(lambda *args: self.fail("late network"))
-        for instant, error in (
-            (datetime(2026, 11, 10, 9, tzinfo=BEIJING), TimeoutError),
-            (datetime(2026, 11, 10, 8), ValueError),
-        ):
+    def test_naive_or_next_day_jobs_are_rejected_before_authority(self):
+        remote = authority(lambda *args: self.fail("invalid period network"))
+        for instant, error in ((datetime(2026, 11, 10, 8), ValueError),):
             with TemporaryDirectory() as directory, self.assertRaises(error):
                 run_hosted_daily(remote, Path(directory), clock=lambda: instant)
+
+    def test_late_same_day_job_can_publish(self):
+        http = AuthorityHTTP()
+        with TemporaryDirectory() as directory:
+            report = self.run_job(http, directory, clock=lambda: LATE_NOW)
+        self.assertEqual(report["status"], "published")
 
     def test_entrypoint_failure_does_not_print_secret_exception(self):
         with patch.dict("os.environ", {}, clear=True), patch("sys.stderr", new_callable=io.StringIO) as output:
             self.assertEqual(main(), 1)
         self.assertNotIn("KeyError", output.getvalue())
 
-    def test_usage_is_persisted_after_response_crosses_deadline_without_publication(self):
+    def test_entrypoint_reports_safe_authority_summary_after_failure(self):
+        authority = AuthorityHTTP()
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "PUBLICATION_BASE_URL": "https://example.test",
+                    "PUBLICATION_AUTOMATION_TOKEN": "private-token",
+                    "PUBLICATION_INSTALLATION_ID": "installation",
+                },
+                clear=True,
+            ),
+            patch("daily_trending.hosted_daily.RemoteAuthority.state", return_value=authority.data),
+            patch("daily_trending.hosted_daily.run_hosted_daily", side_effect=TimeoutError("deadline")),
+            patch("sys.stderr", new_callable=io.StringIO) as output,
+        ):
+            self.assertEqual(main(), 1)
+        text = output.getvalue()
+        self.assertIn("失败类型：TimeoutError", text)
+        self.assertIn("权威摘要：period=", text)
+        self.assertIn("publication=absent", text)
+        self.assertNotIn("private-token", text)
+
+    def test_usage_is_persisted_when_response_crosses_nine_without_blocking_publication(self):
         http = AuthorityHTTP()
         instant = [NOW]
 
@@ -462,7 +491,7 @@ class HostedRunnerTests(unittest.TestCase):
             return response
 
         client = DashScopeClient(api_key="test", transport=transport, config=DashScopeConfig(max_retries=0))
-        with TemporaryDirectory() as directory, self.assertRaises(TimeoutError):
+        with TemporaryDirectory() as directory:
             run_hosted_daily(
                 authority(http),
                 Path(directory),
@@ -471,7 +500,7 @@ class HostedRunnerTests(unittest.TestCase):
                 fetch=lambda _: Path("tests/fixtures/trending_page.html").read_text(encoding="utf-8"),
                 source_loader=lambda _: {"readme": "Build AI agents"},
             )
-        self.assertEqual(len(http.data["reservations"]), 1)
-        self.assertEqual(next(iter(http.data["reservations"].values()))["actual_micros"], 840)
-        self.assertFalse(any(path.endswith("/publish") for _, path, _ in http.calls))
-        self.assertIsNone(http.data["publication"])
+        self.assertEqual(len(http.data["reservations"]), 3)
+        self.assertTrue(all(row["actual_micros"] == 840 for row in http.data["reservations"].values()))
+        self.assertTrue(any(path.endswith("/publish") for _, path, _ in http.calls))
+        self.assertIsNotNone(http.data["publication"])

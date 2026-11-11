@@ -1,5 +1,9 @@
 # Hosted daily deployment
 
+## 2026-11-11 当前发布规则
+
+依据发起人授权，托管流程取消 09:00 硬截止，允许本期所属北京时间日期内任意时间完成。每天 08:15 的自动调度继续保留，维护者可手动触发同一个工作流。跨日未确认发布回滚；同日重复运行返回既有期次。下文的截止点拒绝与当天禁止后续发布说明为旧版记录，以本节及项目规格 v1.3 为准。发布 Python 改动时必须同步部署 Worker，否则远端仍会拒绝 09:00 后的请求。
+
 `python -m daily_trending.hosted_daily` runs the Python generator against one
 Cloudflare Worker / SQLite Durable Object authority. Its temporary directory is
 only a disposable preview. The Worker owns attempts, snapshots, source and model
